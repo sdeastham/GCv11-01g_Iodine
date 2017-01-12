@@ -143,6 +143,7 @@ realclean:
 	@$(MAKE) -C NoHet  clean
 	@$(MAKE) -C IGas   clean
 	@$(MAKE) -C Halogens  clean
+	@$(MAKE) -C Halogensv2  clean
 	@$(MAKE) -C SOA       clean
 	@$(MAKE) -C SOA_SVPOA clean
 	@$(MAKE) -C Tropchem  clean
@@ -155,6 +156,7 @@ slowrealclean:
 	@$(MAKE) -C NoHet  clean
 	@$(MAKE) -C IGas      slowclean
 	@$(MAKE) -C Halogens  slowclean
+	@$(MAKE) -C Halogensv2  slowclean
 	@$(MAKE) -C SOA       slowclean
 	@$(MAKE) -C SOA_SVPOA slowclean
 	@$(MAKE) -C Tropchem  slowclean
