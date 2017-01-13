@@ -874,3 +874,8 @@
 {739} HOI + ClCoarse = ICl :                           HET(ind_HOI,4);
 {740} HOI + BrAq = IBr :                               HET(ind_HOI,5);
 {741} HOI + BrCoarse = IBr :                           HET(ind_HOI,6);
+// Iodine recycling on ice clouds
+{742} IONO2 + H2O = HOI + HNO3 :                       HET(ind_IONO2,7);
+{743} HOI + HBr = IBr + H2O :                          HET(ind_HOI,7);
+{744} HOI + HI = I2 + H2O :                            HET(ind_HOI,8);
+{745} HOI + HCl = ICl + H2O :                          HET(ind_HOI,9);

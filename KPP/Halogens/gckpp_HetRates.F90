@@ -56,6 +56,7 @@ MODULE GCKPP_HETRATES
   ! New iodine heterogeneous chemistry
   PRIVATE :: HETIUptake
   PRIVATE :: HETIXCycleSSA
+  PRIVATE :: HETIXCycleIce
 
   ! These are the new Br/Cl functions from J. Schmidt
   PRIVATE :: HETBrNO3_JS
@@ -599,6 +600,17 @@ MODULE GCKPP_HETRATES
          HET(ind_IONO2,3) = HETIXCycleSSA(1.89E2_fp,0.01E+0_fp,SSAlk)
          HET(ind_HOI,  3) = HETIXCycleSSA(1.44E2_fp,0.01E+0_fp,SSAlk)
          
+         ! Recycling of iodine on ice clouds
+         ! IONO2 + H2O = HOI + HNO3
+         kITemp = HETIXCycleIce(1.89E2_fp,0.10,rIce,AIce)
+         HET(ind_IONO2,4) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('H2O'), kITemp, hetMinLife)
+
+         ! HOI + HX = IX + H2O on tropospheric and stratospheric ice
+         kITemp = HETIXCycleIce(1.44E2_fp,0.12,rIce,AIce)
+         HET(ind_HOI,  4) = kIIR1Ltd( spcVec, ind_('HOI'), ind_('HBr'), kITemp, hetMinLife)
+         HET(ind_HOI,  5) = kIIR1Ltd( spcVec, ind_('HOI'), ind_('HI' ), kITemp, hetMinLife)
+         HET(ind_HOI,  6) = kIIR1Ltd( spcVec, ind_('HOI'), ind_('HCl'), kITemp, hetMinLife)
+
       End If
 
       SCF = SCF2
@@ -793,6 +805,60 @@ MODULE GCKPP_HETRATES
       End If
 
     END FUNCTION kIIR1R2L
+!EOC
+!------------------------------------------------------------------------------
+!                  GEOS-Chem Global Chemical Transport Model                  !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: hetixcycleice
+!
+! !DESCRIPTION: Set the iodine reaction rate on ice clouds.
+!\\
+!\\
+! !INTERFACE:
+!
+    FUNCTION HETIXCycleIce( A, B, rIce, AIce ) RESULT( kISum )
+!
+! !INPUT PARAMETERS: 
+!
+      ! Rate coefficients
+      REAL(fp), INTENT(IN) :: A, B
+      ! Radius (cm) and area density (cm2/cm3) of ice clouds
+      Real(fp), Intent(In) :: rIce, AIce
+!
+! !RETURN VALUE:
+! 
+      REAL(fp)             :: kISum
+!
+! !REMARKS:
+!
+! !REVISION HISTORY:
+!  24 Dec 2016 - S. D. Eastham - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+      REAL(fp) :: XStkCf, AdjustedRate
+
+      ! Initialize
+      kISum        = 0.0_fp
+
+      ! In the stratosphere, we have our own estimate of ice aerosol surface
+      ! area. For now, ignore the distinction between ice and NAT
+      If (StratBox) Then
+         ! Cycling on stratospheric ice clouds
+         AdjustedRate = ARSL1K(XAREA(14),XRADI(14),XDENA,B,XTEMP,(A**0.5_fp))
+         kISum = kISum + AdjustedRate
+      Else
+         ! Reaction rate on tropospheric ice clouds
+         AdjustedRate = ARSL1K(AIce,rIce,XDENA,B,XTEMP,(A**0.5_fp))
+         kISum = kISum + AdjustedRate
+      End If
+      
+    END FUNCTION HETIXCycleIce
 !EOC
 !------------------------------------------------------------------------------
 !                  GEOS-Chem Global Chemical Transport Model                  !

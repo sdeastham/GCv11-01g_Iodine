@@ -856,3 +856,8 @@
 {730} IONO = 0.850ICl + 0.150IBr + HNO2 :              HET(ind_IONO,3);
 {731} IONO2 = 0.850ICl + 0.150IBr + HNO3 :             HET(ind_IONO2,3);
 {732} HOI = 0.850ICl + 0.150IBr :                      HET(ind_HOI,3);
+// Iodine het-chem on ice clouds
+{733} IONO2 + H2O = HOI + HNO3 :                       HET(ind_IONO2,4);
+{734} HOI + HBr = IBr + H2O :                          HET(ind_HOI,4);
+{735} HOI + HI = I2 + H2O :                            HET(ind_HOI,5);
+{736} HOI + HCl = ICl + H2O :                          HET(ind_HOI,6);

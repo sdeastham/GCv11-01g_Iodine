@@ -55,6 +55,10 @@ MODULE GCKPP_HETRATES
 
   ! New iodine heterogeneous chemistry
   PRIVATE :: HETAlkLimit
+  PRIVATE :: HETIXCycleIce
+
+  ! Extended N2O5 + H2O/HCl branching reaction
+  PRIVATE :: HETN2O5_Branch
 
   ! These are the new Br/Cl functions from J. Schmidt
   PRIVATE :: HETBrNO3_JS
@@ -656,6 +660,16 @@ MODULE GCKPP_HETRATES
          HET(ind_IONO2,4) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('ClAqC'), kITemp, hetMinLife)
          HET(ind_IONO2,6) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('BrAqC'), kITemp, hetMinLife)
          
+         ! Recycling of iodine on ice clouds
+         ! IONO2 + H2O = HOI + HNO3
+         kITemp = HETIXCycleIce(1.89E2_fp,0.10e+0_fp,rIce,AIce)
+         HET(ind_IONO2,7) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('H2O'), kITemp, hetMinLife)
+
+         ! HOI + HX = IX + H2O on tropospheric and stratospheric ice
+         kITemp = HETIXCycleIce(1.44E2_fp,0.12e+0_fp,rIce,AIce)
+         HET(ind_HOI,  7) = kIIR1Ltd( spcVec, ind_('HOI'), ind_('HBr'), kITemp, hetMinLife)
+         HET(ind_HOI,  8) = kIIR1Ltd( spcVec, ind_('HOI'), ind_('HI' ), kITemp, hetMinLife)
+         HET(ind_HOI,  9) = kIIR1Ltd( spcVec, ind_('HOI'), ind_('HCl'), kITemp, hetMinLife)
       End If
 
       SCF = SCF2
@@ -850,6 +864,60 @@ MODULE GCKPP_HETRATES
       End If
 
     END FUNCTION kIIR1R2L
+!EOC
+!------------------------------------------------------------------------------
+!                  GEOS-Chem Global Chemical Transport Model                  !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: hetixcycleice
+!
+! !DESCRIPTION: Set the iodine reaction rate on ice clouds.
+!\\
+!\\
+! !INTERFACE:
+!
+    FUNCTION HETIXCycleIce( A, B, rIce, AIce ) RESULT( kISum )
+!
+! !INPUT PARAMETERS: 
+!
+      ! Rate coefficients
+      REAL(fp), INTENT(IN) :: A, B
+      ! Radius (cm) and area density (cm2/cm3) of ice clouds
+      Real(fp), Intent(In) :: rIce, AIce
+!
+! !RETURN VALUE:
+! 
+      REAL(fp)             :: kISum
+!
+! !REMARKS:
+!
+! !REVISION HISTORY:
+!  24 Dec 2016 - S. D. Eastham - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+      REAL(fp) :: XStkCf, AdjustedRate
+
+      ! Initialize
+      kISum        = 0.0_fp
+
+      ! In the stratosphere, we have our own estimate of ice aerosol surface
+      ! area. For now, ignore the distinction between ice and NAT
+      If (StratBox) Then
+         ! Cycling on stratospheric ice clouds
+         AdjustedRate = ARSL1K(XAREA(14),XRADI(14),XDENA,B,XTEMP,(A**0.5_fp))
+         kISum = kISum + AdjustedRate
+      Else
+         ! Reaction rate on tropospheric ice clouds
+         AdjustedRate = ARSL1K(AIce,rIce,XDENA,B,XTEMP,(A**0.5_fp))
+         kISum = kISum + AdjustedRate
+      End If
+      
+    END FUNCTION HETIXCycleIce
 !EOC
 !------------------------------------------------------------------------------
 !                  GEOS-Chem Global Chemical Transport Model                  !
@@ -1425,6 +1493,180 @@ MODULE GCKPP_HETRATES
       END DO
 
     END FUNCTION HETN2O5_SS
+!EOC
+!------------------------------------------------------------------------------
+!                  GEOS-Chem Global Chemical Transport Model                  !
+!------------------------------------------------------------------------------
+!BOP
+!
+! !IROUTINE: hetn2o5_branch
+!
+! !DESCRIPTION: Calculates two reaction rates. The first is the
+! pseudo-first-order rate for N2O5 hydrolysis (N2O5 + H2O), and the second is the
+! pseudo-first-order rate for N2O5 + Cl(aq). This branching is based on the
+! parameterization given in Bertram and Thornton 2009. This parameterization is
+! not appropriate for dry particles (e.g. dust), for which a constant sticking
+! coefficient is instead recommended. Furthermore this may not be valid for
+! highly acidic particles (pH < 2), where N2O5 might catalyse a channel which
+! results in direct formation of Cl2 (Simpson et al 2015).
+!
+! References
+!
+! Bertram, T. H. and Thornton, J. A.: Toward a general parameterization of
+! N2O5 reactivity on aqueous particles: the competing effects of particle
+! liquid water, nitrate and chloride, Atmos. Chem. Phys. 2009
+!
+! Simpson, W. R., Brown, S. S., Saiz-Lopez, A., Thornton, J. A. and Glasow, R.
+! von: Tropospheric halogen chemistry: sources, cycling, and impacts, Chem.
+! Rev., 2015.
+!
+!\\
+!\\
+! !INTERFACE:
+!
+    SUBROUTINE HETN2O5_Branch( AAer,   rAer, ClMol, NO3Mol, H2OMol, H2OAir, H2OMolPerL, &
+                               denAir, TK,   kIH2O, kICl )
+!
+! !INPUT PARAMETERS: 
+!
+      ! Aerosol properties
+      Real(fp), Intent(In)           :: AAer       ! Aerosol surface area (cm2/cm3)
+      Real(fp), Intent(In)           :: rAer       ! Aerosol radius (cm)
+
+      ! Aerosol composition
+      Real(fp), Intent(In)           :: ClMol      ! Cl-  concentration (mol/m3 air)
+      Real(fp), Intent(In)           :: NO3Mol     ! NO3- concentration (mol/m3 air)
+      Real(fp), Intent(In)           :: H2OMol     ! H2O  concentration (mol/m3 air)
+
+      ! Supply this to use the updated parameterization
+      Real(fp), Intent(In), Optional :: H2OMolPerL ! H2O  concentration (mol/L)
+
+      ! Grid box properties
+      Real(fp), Intent(In)           :: denAir     ! Air number density (#/cm3)
+      Real(fp), Intent(In)           :: TK         ! Temperature (K)
+!
+! !OUTPUT PARAMETERS:
+!
+      REAL(fp), Intent(Out)          :: kIH2O      ! Rate of N2O5 + H2O
+      REAL(fp), Intent(Out)          :: kICl       ! Rate of N2O5 + Cl
+!
+! !REMARKS:
+!
+! !REVISION HISTORY:
+!  11 Jan 2017 - S. D. Eastham - Initial version
+!EOP
+!------------------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+!
+      ! Molar mass of N2O5 (g/mol) and its square root
+      Real(fp), Parameter :: XMolWeight = 1.08e+2_fp
+      Real(fp), Parameter :: XSqM       = Sqrt(XMolWeight)
+
+      ! These are factors required to calculate the overall rate of N2O5
+      ! dissociation (k'2f)
+      ! "Beta": 1.15e6 +/- 3e5 s-1
+      Real(fp), Parameter :: betaFactor = 1.15e6_fp
+      ! "Delta": 0.13 +/- 0.05 M-1
+      Real(fp), Parameter :: deltaFactor = 1.3e-1_fp
+      
+      ! Ratio of the rate constant for reaction 3 divided by reaction 2b
+      !  3 : H2ONO2(+) + NO3(-) + H2O    ==> H3O(+) + NO3(-)
+      !  2b: H2ONO2(+) + NO3(-) + NO3(-) ==> N2O5(aq)
+      ! Experimental estimate: 0.06 +/- 0.01
+      Real(fp), Parameter :: ratio32b = 6e-2_fp
+
+      ! Ratio of the rate constant for reaction 4 divided by reaction 2b
+      !  4 : H2ONO2(+) + NO3(-) + X-     ==> XNO2(aq)
+      !  2b: See above
+      ! Experimental estimate: 29 +/- 6
+      Real(fp), Parameter :: ratio42b = 29.0e+0_fp
+
+      ! Ratio of reaction 3 to reaction 4
+      Real(fp), Parameter :: ratio34 = ratio32b/ratio42b
+
+      ! Intermediate variables
+      ! N2O5 dissociation rate factor (s-1)
+      Real(fp)            :: N2O5DissocRate
+      ! Fraction of N2O5 loss rate following each channel
+      Real(fp)            :: yCl, yH2O
+      ! XYRatio: Molar ratio [X]/[Y]
+      Real(fp)            :: ClH2ORatio
+      Real(fp)            :: ClNO3Ratio
+      Real(fp)            :: H2ONO3Ratio
+
+      ! Initialize
+      kISum        = 0.0e+0_fp
+      XStkCf       = 0.0e+0_fp
+      yCl          = 0.0e+0_fp
+      yH2O         = 0.0e+0_fp
+
+      ! Safety check - set uptake to 0.05 on dry aerosol
+      If (H2OMol.le.1.0e-10_fp) Then
+         ! Assume only ClNO2 + HNO3 channel is followed
+         XStkCf = 0.05e+0_f
+         kISum = Arsl1K(AAer,rAer,denAir,XStkCf,TK,XSqM)
+         kIH2O = 0.0e+0_fp
+         kICl  = 1.0e+0_fp
+         Return
+      End If
+      
+      ! Relative concentration of X to Y (unitless)
+      ClH2ORatio  = Safe_Div(ClMol, H2OMol,0.0e+0_fp)
+
+      ! If Cl/NO3 > 0.1, nitrate effect should be negated
+      ClNO3Ratio  = Safe_Div(ClMol, NO3Mol,1.0e+2_fp)
+
+      ! If H2O/NO3 > 20, nitrate effect should be negated
+      H2ONO3Ratio = Safe_Div(H2OMol,NO3Mol,1.0e+2_fp)
+
+      ! Yield of ClNO2 = removal rate of Cl-
+      yCl = Safe_Div(ratio34,ClH2ORatio,0.0e+0_fp)
+      If (yCl .gt. 1.0e-20_fp) Then
+         yCl = 1.0e+0_fp / (1.0e+0_fp + yCl)
+      Else
+         yCl = 0.0e+0_fp
+      End If
+
+      ! Safety check
+      yCl  = Min(Max(yCl,0.0e+0_fp),1.0e+0_fp)
+      yH2O = 1.0e+0_fp - yCl
+
+      ! TWO APPROACHES
+      ! If we have a consistent estimate of the H2O molarity in moles of H2O per
+      ! liter of aerosol, use that to perform the full Bertram and Thornton 2009
+      ! calculation. Otherwise, use the old N2O5 gamma as a stopgap, and only
+      ! use the ClNO2 yield from the new method.
+      If (Present(H2OMolPerL)) Then
+         ! Calculate N2O5 dissociation rate proxy
+         N2O5DissocRate = betaFactor * (1.0e+0_fp - &
+            exp(-1.0e+0_fp * deltaFactor * H2OMolPerL) )
+
+         ! Prefactor (A * k'2f) from the B&T 2009
+         gammaFactor = 3.2e-8_fp * N2O5DissocRate
+
+         ! Denominator
+         gammaDenom = 1.0e+0_fp + (ratio32b*H2ONO3Ratio) + (ratio42b*ClNO3Ratio)
+
+         ! Final sticking coefficient
+         XStkCf = gammaFactor * (1.0e+0_fp - (1.0e+0_fp / gammaDenom ) )
+      Else
+         ! Use old parameterization to get the overall sticking factor on
+         ! "sulfate" aerosol
+         XStkCf = N2O5(8, TK, RELHUM)
+      End If
+
+      ! Figure out the overall loss rate of N2O5
+      kISum = Arsl1K(AAer,rAer,denAir,XStkCf,TK,XSqM)
+
+      ! Return the overall rate of:
+      !   N2O5 + H2O = 2HNO3
+      kIH2O = kISum * yH2O
+      !   N2O5 + Cl- = HNO3 + ClNO2
+      kICl  = kISum * yCl
+
+    END FUNCTION HETN2O5_Branch
 !EOC
 !------------------------------------------------------------------------------
 !                  GEOS-Chem Global Chemical Transport Model                  !
