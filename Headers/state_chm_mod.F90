@@ -76,7 +76,12 @@ MODULE State_Chm_Mod
 
      ! pH and alkalinity
      Real(fp),          POINTER :: pHCloud    (:,:,:  ) ! Cloud pH [-]
+     Real(fp),          POINTER :: pHFine     (:,:,:  ) ! Fine aerosol pH [-]
+     Real(fp),          POINTER :: H2OFine    (:,:,:  ) ! Fine aerosol H2O [mol/L]
      Real(fp),          POINTER :: SSAlk      (:,:,:,:) ! Sea-salt alkalinity [-]
+
+     ! Partitioning
+     Real(fp),          POINTER :: AqPtn      (:,:,:,:,:) ! Phase partitioning [-]
 
 #if defined( ESMF_ )
      ! Chemical rates & rate parameters
@@ -389,7 +394,12 @@ CONTAINS
 
     ! pH/alkalinity
     State_Chm%pHCloud     => NULL()
+    State_Chm%pHFine      => NULL()
+    State_Chm%H2OFine     => NULL()
     State_Chm%SSAlk       => NULL()
+
+    ! Phase partitioning
+    State_Chem%AqPtn      => NULL()
 
     ! Hg species indexing
     N_Hg0_CATS            =  0
@@ -494,9 +504,21 @@ CONTAINS
     IF ( RC /= GC_SUCCESS ) RETURN
     State_Chm%pHCloud = 0e+0_fp
 
+    ALLOCATE( State_Chm%pHFine     ( IM, JM, LM                    ), STAT=RC )
+    IF ( RC /= GC_SUCCESS ) RETURN
+    State_Chm%pHFine = 0e+0_fp
+
+    ALLOCATE( State_Chm%H2OFine    ( IM, JM, LM                    ), STAT=RC )
+    IF ( RC /= GC_SUCCESS ) RETURN
+    State_Chm%H2OFine = 0e+0_fp
+
     ALLOCATE( State_Chm%SSAlk      ( IM, JM, LM, 2                 ), STAT=RC )
     IF ( RC /= GC_SUCCESS ) RETURN
     State_Chm%SSAlk = 0e+0_fp
+
+    ALLOCATE( State_Chm%AqPtn   ( IM, JM, LM, 3, 4              ), STAT=RC )
+    IF ( RC /= GC_SUCCESS ) RETURN
+    State_Chm%AqPtn = 0e+0_fp
 
     !=====================================================================
     ! Allocate and initialize fields for UCX mechamism
@@ -780,8 +802,20 @@ CONTAINS
        DEALLOCATE(State_Chm%pHCloud)
     ENDIF
 
+    IF ( ASSOCIATED(State_Chm%pHFine) ) THEN
+       DEALLOCATE(State_Chm%pHFine)
+    ENDIF
+
+    IF ( ASSOCIATED(State_Chm%H2OFine) ) THEN
+       DEALLOCATE(State_Chm%H2OFine)
+    ENDIF
+
     IF ( ASSOCIATED(State_Chm%SSAlk) ) THEN
        DEALLOCATE(State_Chm%SSAlk)
+    ENDIF
+
+    IF ( ASSOCIATED(State_Chm%AqPtn) ) THEN
+       DEALLOCATE(State_Chm%AqPtn)
     ENDIF
 
     IF ( ASSOCIATED( State_Chm%STATE_PSC ) ) THEN
