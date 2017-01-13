@@ -198,6 +198,10 @@
       INTEGER, SAVE            :: id_HNO3, id_NH3,  id_NH4
       INTEGER, SAVE            :: id_NIT,  id_SALA, id_SO4
 
+      ! Halogen update
+      Logical, Save            :: halUpdate
+      Integer, Save            :: id_ClAq, id_HCl
+
       ! Scalars
       INTEGER                  :: I,    J,    L,    N
       REAL(fp)                 :: ANO3, GNO3
@@ -205,6 +209,7 @@
       REAL(fp)                 :: TCA,  TMG,  TK,   HNO3_DEN
       REAL(fp)                 :: TNA,  TCL,  TNH3, TNH4
       REAL(fp)                 :: TNIT, TNO3, TSO4, VOL
+      REAL(fp)                 :: GCl ! Halogen update
       REAL(f8)                 :: AERLIQ(NIONSA+NGASAQA+2)
       REAL(f8)                 :: AERSLD(NSLDSA) 
       REAL(f8)                 :: GAS(NGASAQA) 
@@ -263,6 +268,13 @@
          id_NIT  = Ind_('NIT' )
          id_SALA = Ind_('SALA')
          id_SO4  = Ind_('SO4' )
+
+         ! Halogen update
+         id_ClAq = Ind_('ClAq')
+         id_HCl  = Ind_('HCl')
+
+         ! Change our mode of operation if we are doing this
+         halUpdate = ((id_HCl>0).and.and.(id_ClAq>0))
 
          ! Make sure certain tracers are defined
          IF ( id_SO4 <= 0 ) THEN
@@ -342,6 +354,7 @@
 !$OMP+PRIVATE( TCA,  TMG,    TK,      CNTRL,  SCASI                  )
 !$OMP+PRIVATE( TNO3, AERLIQ, AERSLD,  OTHER,  TNH4, TNIT             )
 !$OMP+PRIVATE( HPLUSTEMP,    NUM_SAV, DEN_SAV, HNO3_DEN              )
+!$OMP+PRIVATE( GCl                                                   )
 !$OMP+SCHEDULE( DYNAMIC )
       DO L = 1, LLPAR
       DO J = 1, JJPAR
@@ -396,9 +409,16 @@
             TNA = Spc(I,J,L,id_SALA) * 0.3061e+0_fp * 1.e+3_fp /
      &        ( 22.99e+0_fp  * VOL  )
 
-            ! Total Cl- (55.04% by weight of seasalt) [mole/m3]
-            TCL = Spc(I,J,L,id_SALA) * 0.5504e+0_fp * 1.e+3_fp /
-     &           ( 35.45e+0_fp  * VOL  )
+            If (halUpdate) Then
+               ! Treat in-aerosol chlorine explicitly
+               TCl = Spc(I,J,L,id_ClAq)* 1.e+3_fp / (35.5e+0_fp * VOL)
+               GCl = Spc(I,J,L,id_HCl) * 1.e+3_fp / (36.5e+0_fp * VOL)
+               TCl = TCl + GCl
+            Else
+               ! Total Cl- (55.04% by weight of seasalt) [mole/m3]
+               TCL = Spc(I,J,L,id_SALA) * 0.5504e+0_fp * 1.e+3_fp /
+     &              ( 35.45e+0_fp  * VOL  )
+            End If
 
 !==============================================================================
 !=== NOTE: As of 11/2007, ISORROPIAII does not conserve mass when Ca,K,Mg are 
@@ -505,6 +525,11 @@
          TNH4 = MAX( 18.e-3_fp * VOL * ( WT(3) - GAS(1) ), CONMIN )
          TNIT = MAX( 62.e-3_fp * VOL * ( WT(4) - GAS(2) ), CONMIN )
 
+         If (halUpdate) Then
+            GCl  = MAX( 36.5e-3_fp * VOL * (         GAS(3) ), CONMIN )
+            TCL  = MAX( 35.5e-3_fp * VOL * ( WT(6) - GAS(3) ), CONMIN )
+         End If
+
          ! Save tracers back into Spc array [kg]
          ! no longer save TSO4 back into Spc. SO4 is all aerosol phase
          ! (hotp 11/7/07)
@@ -512,6 +537,11 @@
          Spc(I,J,L,id_NH3) = TNH3
          Spc(I,J,L,id_NH4) = TNH4
          Spc(I,J,L,id_NIT) = TNIT
+
+         If (halUpdate)
+            Spc(I,J,L,id_HCl  ) = GCl
+            Spc(I,J,L,id_ClAq ) = TCl
+         End If
 
          ! Special handling for HNO3 [kg]
          IF ( id_HNO3 > 0 ) THEN
