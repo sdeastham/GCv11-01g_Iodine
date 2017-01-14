@@ -194,6 +194,7 @@
       ! RHO_AER            : Aerosol mass density (kg/m3 aerosol)
       ! AERFRAC            : Mass fraction of species in liquid aerosols
       ! AERFRACIND         : Indices of liquid aerosol species
+      ! AERDEFAULT         : Default fraction of species in aerosol
       ! NOX_O              : Monthly mean noontime O3P/O1D for NOx calcs
       ! NOX_J              : Monthly mean noontime J-rates for NOx calcs
       ! SO4_TOPPHOT        : Photolysis rate at the top of the chemgrid (1/s)
@@ -239,7 +240,7 @@
       REAL(fp),DIMENSION(:,:),ALLOCATABLE     :: UCX_REGRID
       REAL(fp),DIMENSION(:),ALLOCATABLE       :: UCX_PLEVS
       REAL(fp),DIMENSION(:),ALLOCATABLE       :: UCX_LATS
-      INTEGER,DIMENSION(MAX_EMIT)           :: IDT_EMIT
+      INTEGER,DIMENSION(MAX_EMIT)             :: IDT_EMIT
       REAL(fp),DIMENSION(:,:),ALLOCATABLE     :: GRID_EMIT
       REAL(fp),DIMENSION(:,:,:,:),ALLOCATABLE :: RAD_AER
       REAL(fp),DIMENSION(:,:,:,:),ALLOCATABLE :: KG_AER
@@ -247,7 +248,8 @@
       REAL(fp),DIMENSION(:,:,:,:),ALLOCATABLE :: NDENS_AER
       REAL(fp),DIMENSION(:,:,:,:),ALLOCATABLE :: RHO_AER
       REAL(fp),DIMENSION(:,:,:,:),ALLOCATABLE :: AERFRAC
-      INTEGER,DIMENSION(:),ALLOCATABLE      :: AERFRACIND
+      INTEGER,DIMENSION(:),ALLOCATABLE        :: AERFRACIND
+      Real(fp),DIMENSION(:),ALLOCATABLE       :: AerDefault
       REAL(fp),DIMENSION(:,:,:,:),ALLOCATABLE :: NOX_O
       REAL(fp),DIMENSION(:,:,:,:),ALLOCATABLE :: NOX_J
       REAL(fp),DIMENSION(:,:),ALLOCATABLE     :: SO4_TOPPHOT
@@ -332,6 +334,7 @@
       INTEGER :: id_CFC113,  id_CFC114,   id_CFC115
       INTEGER :: id_HCFC123, id_HCFC141b, id_HCFC142b
       INTEGER :: id_CLOCK
+      INTEGER :: id_ClAq,    id_BrAq ! Dissolved Cl- and Br-
 
       !=================================================================
       ! MODULE ROUTINES -- follow below the "CONTAINS" statement 
@@ -3021,7 +3024,7 @@
                IF (PHASEMASS(3,2).gt.TINY(1e+0_fp)) THEN
                   AERFRAC(I,J,L,K) = PHASEMASS(2,2)/PHASEMASS(3,2)
                ELSE
-                  AERFRAC(I,J,L,K) = 0e+0_fp
+                  AERFRAC(I,J,L,K) = AerDefault(K)
                ENDIF
 
                ! Store result
@@ -3065,7 +3068,7 @@
                   IF (PHASEMASS(3,1).gt.TINY(1e+0_fp)) THEN
                      AERFRAC(I,J,L,K) = PHASEMASS(2,1)/PHASEMASS(3,1)
                   ELSE
-                     AERFRAC(I,J,L,K) = 0e+0_fp
+                     AERFRAC(I,J,L,K) = AerDefault(K)
                   ENDIF
 
                   ! Store result
@@ -3731,6 +3734,21 @@
       REAL(fp), POINTER       :: Spc (:,:,:,:)
       REAL(fp), POINTER       :: KHETI_SLA(:,:,:,:)
       REAL(f4), POINTER       :: STATE_PSC(:,:,:)
+      Real(fp), Pointer       :: AqPtn(:,:,:,:,:)
+
+      ! Species indexing for partitioning
+      Integer, Parameter      :: iBr = 1
+      Integer, Parameter      :: iCl = 2
+      Integer, Parameter      :: iI  = 3
+
+      ! Phase indexing for partitioning of HX
+      ! Note: we only use Gas, Ice and in this module
+      Integer, Parameter      :: jGas      = 1
+      Integer, Parameter      :: jLCld     = 2
+      Integer, Parameter      :: jICld     = 3
+
+      ! Temporary - molar fraction of a species in aqueous phase
+      Real(fp)                :: aqFrac 
 
       !=================================================================
       ! CALC_STRAT_AER begins here!
@@ -3752,6 +3770,9 @@
 
       ! Initialize GEOS-Chem species array [kg]
       Spc => State_Chm%Species
+
+      ! Initialize GEOS-Chem aqueous-phase partitioning array [-]
+      AqPtn => State_Chm%AqPtn
 
       ! Initialize sticking coefficients for PSC reactions on SLA
       KHETI_SLA => State_Chm%KHETI_SLA
@@ -3809,7 +3830,7 @@
 !$OMP+PRIVATE( D_FRACN,      D_MAXN,             D_XH2O        )
 !$OMP+PRIVATE( D_XHNO3,      D_XNAT,             D_PPA         )
 !$OMP+PRIVATE( D_PP,         D_PS,               D_TK          )
-!$OMP+PRIVATE( VOL_TOT,      BOX_LAT                           )
+!$OMP+PRIVATE( VOL_TOT,      BOX_LAT,            aqFrac        )
 !$OMP+SCHEDULE( DYNAMIC )
       DO L = 1, LLPAR
       DO J = 1, JJPAR
@@ -3835,6 +3856,24 @@
      &                        (.not.((PCENTER_PA.lt.PSC_PMIN).or.
      &                               (PCENTER_PA.gt.PSC_PMAX)))
                IS_VALID = (IS_VALID.or.PSC_FULL)
+
+               ! Reset the partitioning array in strat boxes; assume
+               ! that all HCl and HBr not dissolved in the fine aerosol
+               ! mode is in the gas phase
+               If (Is_Strat) Then
+                  AqPtn(I,J,L,iBr,jGas ) = 1.0e+0_fp
+                  AqPtn(I,J,L,iBr,jICld) = 0.0e+0_fp
+                  AqPtn(I,J,L,iBr,jLCld) = 0.0e+0_fp
+
+                  AqPtn(I,J,L,iCl,jGas ) = 1.0e+0_fp
+                  AqPtn(I,J,L,iCl,jICld) = 0.0e+0_fp
+                  AqPtn(I,J,L,iCl,jLCld) = 0.0e+0_fp
+
+                  ! Also reset iodine
+                  AqPtn(I,J,L,iI, jGas ) = 1.0e+0_fp
+                  AqPtn(I,J,L,iI, jICld) = 0.0e+0_fp
+                  AqPtn(I,J,L,iI, jLCld) = 0.0e+0_fp
+               End If
 
                ! Initialize variables
                VOL_NAT      = 0.0e+0_fp
@@ -4109,6 +4148,14 @@
                HBrSUM   = Spc(I,J,L,id_HBr) * INVAIR /
      &                    State_Chm%SpcData(id_HBr)%Info%emMW_g
 
+               If ((id_ClAq > 0).and.(id_BrAq > 0)) Then
+                  ! Now add in dissolved Cl- and Br-
+                  HClSum = HClSum + Spc(I,J,L,id_ClAq) * INVAIR / 
+     &                       State_Chm%SpcData(id_ClAq)%Info%emMW_g
+                  HBrSum = HBrSum + Spc(I,J,L,id_BrAq) * INVAIR / 
+     &                       State_Chm%SpcData(id_BrAq)%Info%emMW_g
+               End If
+
                ! H2SO4 gas fraction calculated earlier throughout grid
                ! Consider gaseoues H2SO4 to be unavailable for SLA
                H2SO4_BOX_L = H2SO4SUM * AERFRAC(I,J,L,1)
@@ -4220,31 +4267,19 @@
                H2O_BOX_G = MAX(0e+0_fp,H2O_BOX_G-(H2O_BOX_L+H2O_BOX_S))
   
                ! If very low number density, ignore settling
-               AERFRAC(I,J,L,2) = 0e+0_fp 
-               AERFRAC(I,J,L,3) = 0e+0_fp 
-               AERFRAC(I,J,L,4) = 0e+0_fp 
-               AERFRAC(I,J,L,5) = 0e+0_fp 
-               AERFRAC(I,J,L,6) = 0e+0_fp 
-               AERFRAC(I,J,L,7) = 0e+0_fp
- 
+               Do K=2,7
+                  AERFRAC(I,J,L,K) = AerDefault(K)
+               End Do
+
+               ! H2SO4 (1) is set elsewhere
                IF ((HNO3SUM.gt.1e+0_fp).and.
      &            (IS_SAFE_DIV(HNO3_BOX_L,HNO3SUM))) THEN
                   AERFRAC(I,J,L,2) = HNO3_BOX_L/HNO3SUM
                ENDIF
 
-               IF ((HClSUM.gt.1e+0_fp).and.
-     &            (IS_SAFE_DIV(HCl_BOX_L,HClSUM))) THEN
-                  AERFRAC(I,J,L,3) = HCl_BOX_L/HClSUM
-               ENDIF
-
                IF ((HOClSUM.gt.1e+0_fp).and.
      &            (IS_SAFE_DIV(HOCl_BOX_L,HOClSUM))) THEN
                   AERFRAC(I,J,L,4) = HOCl_BOX_L/HOClSUM
-               ENDIF
-
-               IF ((HBrSUM.gt.1e+0_fp).and.
-     &            (IS_SAFE_DIV(HBr_BOX_L,HBrSUM))) THEN
-                  AERFRAC(I,J,L,5) = HBr_BOX_L/HBrSUM
                ENDIF
 
                IF ((HOBrSUM.gt.1e+0_fp).and.
@@ -4257,34 +4292,75 @@
                   AERFRAC(I,J,L,7) = H2O_BOX_L/H2OSUM
                ENDIF
 
+               ! If id_ClAq > 0, then we have dedicated tracers for this
+               ! and AerFrac should be left as default
+               If (id_ClAq == 0) Then
+                  IF ((HClSUM.gt.1e+0_fp).and.
+     &               (IS_SAFE_DIV(HCl_BOX_L,HClSUM))) THEN
+                     AERFRAC(I,J,L,3) = HCl_BOX_L/HClSUM
+                  ENDIF
+
+                  IF ((HBrSUM.gt.1e+0_fp).and.
+     &               (IS_SAFE_DIV(HBr_BOX_L,HBrSUM))) THEN
+                     AERFRAC(I,J,L,5) = HBr_BOX_L/HBrSUM
+                  EndIf
+               ElseIf (Is_Strat) Then
+                  ! Save out the revised partitioning
+                  ! SDE 2017-01-13
+                  AerFrac(I,J,L,3) = 1.0e+0_fp
+                  AerFrac(I,J,L,5) = 1.0e+0_fp
+                  ! Get fraction of Br molecules in aqueous phase
+                  If ((HBrSum.gt.1.0e+0_fp).and.
+     &                (is_Safe_Div(HBr_Box_L,HBrSum))) Then
+                     aqFrac = HBr_Box_L / HBrSum
+                  Else
+                     aqFrac = 0.0e+0_fp
+                  End If
+                  Spc(I,J,L,id_HBr)  = HBrSum * (1.0e+0_fp - aqFrac) *
+     &              State_Chm%SpcData(id_HBr)%Info%emMW_g / INVAIR
+                  Spc(I,J,L,id_BrAq) = HBrSum * aqFrac *
+     &              State_Chm%SpcData(id_BrAq)%Info%emMW_g / INVAIR
+                  ! Repeat for chlorine
+                  If ((HClSum.gt.1.0e+0_fp).and.
+     &                (is_Safe_Div(HCl_Box_L,HClSum))) Then
+                     aqFrac = HCl_Box_L / HClSum
+                  Else
+                     aqFrac = 0.0e+0_fp
+                  End If
+                  Spc(I,J,L,id_HCl)  = HClSum * (1.0e+0_fp - aqFrac ) *
+     &              State_Chm%SpcData(id_HCl)%Info%emMW_g / INVAIR
+                  Spc(I,J,L,id_ClAq) = HClSum * aqFrac *
+     &              State_Chm%SpcData(id_ClAq)%Info%emMW_g / INVAIR
+               End If
+
                ! Send properties to larger array
                ! Convert sticking coefficients into
                ! premultiplying factors ((Kirner)
                KHET_COMMON = 0.25e+0_fp*MOLEC_SPEED(TCENTER,1e+0_fp)
 
                ! N2O5 + H2O/HCl
-               KHET_SPECIFIC= KHET_COMMON*ISR_N2O5
+               KHET_SPECIFIC = KHET_COMMON*ISR_N2O5
                KHETI_SLA(I,J,L,1)  = GAMMA_BOX(1 )*KHET_SPECIFIC
                KHETI_SLA(I,J,L,2)  = GAMMA_BOX(2 )*KHET_SPECIFIC
 
                ! ClNO3 + H2O/HCl/HBr
-               KHET_SPECIFIC= KHET_COMMON*ISR_ClNO3
+               KHET_SPECIFIC = KHET_COMMON*ISR_ClNO3
                KHETI_SLA(I,J,L,3)  = GAMMA_BOX(3 )*KHET_SPECIFIC
                KHETI_SLA(I,J,L,4)  = GAMMA_BOX(4 )*KHET_SPECIFIC
                KHETI_SLA(I,J,L,5)  = GAMMA_BOX(5 )*KHET_SPECIFIC
  
                ! BrNO3 + H2O/HCl
-               KHET_SPECIFIC= KHET_COMMON*ISR_BrNO3
+               KHET_SPECIFIC = KHET_COMMON*ISR_BrNO3
                KHETI_SLA(I,J,L,6)  = GAMMA_BOX(6 )*KHET_SPECIFIC
                KHETI_SLA(I,J,L,7)  = GAMMA_BOX(7 )*KHET_SPECIFIC
 
                ! HOCl + HCl/HBr
-               KHET_SPECIFIC= KHET_COMMON*ISR_HOCl
+               KHET_SPECIFIC = KHET_COMMON*ISR_HOCl
                KHETI_SLA(I,J,L,8)  = GAMMA_BOX(8 )*KHET_SPECIFIC
                KHETI_SLA(I,J,L,9)  = GAMMA_BOX(9 )*KHET_SPECIFIC
 
                ! HOBr + HBr/HCl
-               KHET_SPECIFIC= KHET_COMMON*ISR_HOBr
+               KHET_SPECIFIC = KHET_COMMON*ISR_HOBr
                KHETI_SLA(I,J,L,10) = GAMMA_BOX(10)*KHET_SPECIFIC
                KHETI_SLA(I,J,L,11) = GAMMA_BOX(11)*KHET_SPECIFIC
 
@@ -4329,7 +4405,7 @@
       ENDIF
 
       ! Free pointers
-      NULLIFY( Spc, STATE_PSC, KHETI_SLA )
+      NULLIFY( Spc, STATE_PSC, KHETI_SLA, AqPtn )
 
       END SUBROUTINE CALC_STRAT_AER
 !EOC
@@ -6747,6 +6823,8 @@
       id_SO2     = Ind_('SO2'       )
       id_SO4     = Ind_('SO4'       )
       id_CLOCK   = Ind_('CLOCK'     )
+      id_ClAq    = Ind_('ClAq'      )
+      id_BrAq    = Ind_('BrAq'      )
 
       ! Print info
       IF ( am_I_Root ) THEN
@@ -7052,16 +7130,34 @@
       IF ( AS /= 0 ) CALL ALLOC_ERR( 'AERFRAC' )
       AERFRAC = 0e+0_fp
 
+      ALLOCATE( AerDefault( 7 ), STAT=AS )
+      IF ( AS /= 0 ) CALL ALLOC_ERR( 'AerDefault' )
+      AerDefault = 0.0e+0_fp
+
       ALLOCATE( AERFRACIND( 7 ), STAT=AS )
       IF ( AS /= 0 ) CALL ALLOC_ERR( 'AERFRACIND' )
       AERFRACIND(1) = id_SO4
       AERFRACIND(2) = id_HNO3
-      AERFRACIND(3) = id_HCl
       AERFRACIND(4) = id_HOCl
-      AERFRACIND(5) = id_HBr
       AERFRACIND(6) = id_HOBr
       AERFRACIND(7) = id_H2O
-    
+
+      If (id_ClAq>0) Then
+         ! Some tracers are always dissolved
+         AERFRACIND(3) = id_ClAq
+         AERFRACIND(5) = id_BrAq
+         AerDefault(3) = 1.0e+0_fp
+         AerDefault(5) = 1.0e+0_fp
+      Else
+         AERFRACIND(3) = id_HCl
+         AERFRACIND(5) = id_HBr
+      End If
+
+      ! Set to defaults
+      Do JOut=1,7    
+         AERFRAC(:,:,:,JOut) = AerDefault(JOut)
+      End Do
+
       ! H2SO4 photolysis rate at the top of the chemgrid
       ALLOCATE( SO4_TOPPHOT( IIPAR,JJPAR ), STAT=AS )
       IF ( AS /= 0 ) CALL ALLOC_ERR( 'SO4_TOPPHOT' )
@@ -7316,6 +7412,7 @@
       IF ( ALLOCATED( NDENS_AER  ) ) DEALLOCATE( NDENS_AER  )
       IF ( ALLOCATED( AERFRAC    ) ) DEALLOCATE( AERFRAC    )
       IF ( ALLOCATED( AERFRACIND ) ) DEALLOCATE( AERFRACIND )
+      IF ( ALLOCATED( AerDefault ) ) DEALLOCATE( AerDefault )
       IF ( ALLOCATED( UCX_MR     ) ) DEALLOCATE( UCX_MR     )
       IF ( ALLOCATED( UCX_MR_IN  ) ) DEALLOCATE( UCX_MR_IN  )
       IF ( ALLOCATED( UCX_REGRID ) ) DEALLOCATE( UCX_REGRID )
