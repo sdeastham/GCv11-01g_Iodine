@@ -373,11 +373,24 @@
             CALL GEOS_Timer_Start( "=> Gas-phase chem", RC )
 #endif
 
+            ! We need aerosol information prior to KPP, to allow correct
+            ! calculation of het-chem rates
             ! Dry-run sulfate chem to get cloud pH
-            If (LSulf) Then
-               CALL CHEMSULFATE( am_I_Root,
-     &           Input_Opt, State_Met, State_Chm, .False., RC )
-            End If
+            If (Ind_('BrAq').gt.0) Then
+               If (LSulf) Then
+                  CALL CHEMSULFATE( am_I_Root,
+     &              Input_Opt, State_Met, State_Chm, .False., RC )
+               End If
+
+               ! Do aerosol thermodynamic equilibrium
+               IF ( LSSALT ) THEN
+#if   !defined( NO_ISORROPIA )
+                  ! ISOROPIA takes Na+, Cl- into account
+                  CALL DO_ISOROPIAII
+     &               ( am_I_Root, Input_Opt, State_Met, State_Chm, RC )
+#endif
+               ENDIF
+            ENDIF
 
             ! Call gas-phase chemistry
             CALL Do_FlexChem

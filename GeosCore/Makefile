@@ -426,6 +426,9 @@ aerosol_mod.o               : aerosol_mod.F                                  \
                               chemgrid_mod.o          dao_mod.o              \
                               diag_mod.o              ucx_mod.o
 
+aqueous_mod.o               : aqueous_mod.F90         isoropiaII_mod.o       \
+                              chemgrid_mod.o
+
 benchmark_mod.o             : benchmark_mod.F                              
 
 bromocarb_mod.o             : bromocarb_mod.F         dao_mod.o              \
@@ -594,7 +597,7 @@ flexchem_mod.o              : flexchem_mod.F90                               \
                               diag_mod.o              diag_oh_mod.o          \
                               diag20_mod.o            dust_mod.o             \
                               fast_jx_mod.o           future_emissions_mod.o \
-                              tomas_mod.o
+                              tomas_mod.o             aqueous_mod.o
 
 future_emissions_mod.o      : future_emissions_mod.F
 

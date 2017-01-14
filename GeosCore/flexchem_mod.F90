@@ -64,6 +64,7 @@ CONTAINS
 ! !USES:
 !
     USE AEROSOL_MOD,          ONLY : SOILDUST, AEROSOL_CONC, RDAER
+    Use Aqueous_Mod,          Only : Partition_Soluble
     USE CHEMGRID_MOD,         ONLY : ITS_IN_THE_CHEMGRID
     USE CMN_FJX_MOD
     USE CMN_SIZE_MOD,         ONLY : IIPAR, JJPAR, LLPAR
@@ -361,7 +362,10 @@ CONTAINS
        SpcInfo => NULL()
 
     ENDDO
-      
+
+    ! Update species partitioning for highly soluble species
+    Call Partition_Soluble( am_I_Root, Input_Opt, State_Met, State_Chm, RC )
+
     !=================================================================
     ! Call RDAER -- computes aerosol optical depths
     !=================================================================
