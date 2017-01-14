@@ -435,17 +435,20 @@ ifeq ($(shell [[ "$(CHEM)" =~ $(REGEXP) ]] && echo true),true)
   IS_CHEM_SET        :=1
 endif
 
-# %%%%% Test if CHEM=Halogensv2 %%%%%
-REGEXP               :=(^[Hh][Aa][Ll][Oo][Gg][Ee][Nn][Ss][Vv]2)
-ifeq ($(shell [[ "$(CHEM)" =~ $(REGEXP) ]] && echo true),true)
-  KPP_CHEM           :=Halogensv2
-  IS_CHEM_SET        :=1
-endif
+# Note: following 2 tests must occur in this order! Setting
+# CHEM=Halogensv2 will trigger both
 
 # %%%%% Test if CHEM=Halogens %%%%%
 REGEXP               :=(^[Hh][Aa][Ll][Oo][Gg][Ee][Nn][Ss])
 ifeq ($(shell [[ "$(CHEM)" =~ $(REGEXP) ]] && echo true),true)
   KPP_CHEM           :=Halogens
+  IS_CHEM_SET        :=1
+endif
+
+# %%%%% Test if CHEM=Halogensv2 %%%%%
+REGEXP               :=(^[Hh][Aa][Ll][Oo][Gg][Ee][Nn][Ss][Vv]2)
+ifeq ($(shell [[ "$(CHEM)" =~ $(REGEXP) ]] && echo true),true)
+  KPP_CHEM           :=Halogensv2
   IS_CHEM_SET        :=1
 endif
 
