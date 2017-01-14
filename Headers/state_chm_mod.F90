@@ -399,7 +399,7 @@ CONTAINS
     State_Chm%SSAlk       => NULL()
 
     ! Phase partitioning
-    State_Chem%AqPtn      => NULL()
+    State_Chm%AqPtn       => NULL()
 
     ! Hg species indexing
     N_Hg0_CATS            =  0

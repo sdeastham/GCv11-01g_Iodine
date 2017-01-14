@@ -274,7 +274,7 @@
          id_HCl  = Ind_('HCl')
 
          ! Change our mode of operation if we are doing this
-         halUpdate = ((id_HCl>0).and.and.(id_ClAq>0))
+         halUpdate = ((id_HCl>0).and.(id_ClAq>0))
 
          ! Make sure certain tracers are defined
          IF ( id_SO4 <= 0 ) THEN
@@ -538,7 +538,7 @@
          Spc(I,J,L,id_NH4) = TNH4
          Spc(I,J,L,id_NIT) = TNIT
 
-         If (halUpdate)
+         If (halUpdate) Then
             Spc(I,J,L,id_HCl  ) = GCl
             Spc(I,J,L,id_ClAq ) = TCl
          End If
