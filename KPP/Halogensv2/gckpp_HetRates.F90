@@ -90,7 +90,6 @@ MODULE GCKPP_HETRATES
 
   ! These are subfunctions to calculate rates on/in clouds and SSA
   PRIVATE :: CLD_PARAMS
-  PRIVATE :: GET_HALIDE_CLDConc
   Private :: Get_Halide_SSAConc
   PRIVATE :: COMPUTE_L2G_LOCAL
   PRIVATE :: CLD1K_XNO3
@@ -243,30 +242,33 @@ MODULE GCKPP_HETRATES
       Logical, Parameter :: fixedSaltBr=.True.
       Logical            :: useSaltBr
 
-      ! Concentration of H+ in the various aerosols
-      Real(fp)           :: hConc_LCl
-      Real(fp)           :: hConc_ICl
-      Real(fp)           :: hConc_Fine
-      Real(fp)           :: hConc_SSC
+      ! Concentration of H+ in the various aerosols (mol/L)
+      Real(fp)           :: hConcLCl_M
+      Real(fp)           :: hConcICl_M
+      Real(fp)           :: hConcFine_M
+      Real(fp)           :: hConcCoarse_M
 
-      ! Br, Cl and I in different phases
+      ! Br, Cl and I in different phases (#/cm3)
       Real(fp)           :: brGas, brAq, brCoarse, brTot
       Real(fp)           :: clGas, clAq, clCoarse, clTot
       Real(fp)           :: IGas,  IAq,  ICoarse,  ITot
 
-      ! Concentration of Br- and Cl- in the various aerosols
-      Real(fp)           :: brConc_Base
-      Real(fp)           :: brConc_ICl, clConc_ICl
-      Real(fp)           :: brConc_LCl, clConc_LCl
-      Real(fp)           :: brConc_Fine,clConc_Fine
-      Real(fp)           :: brConc_SSC, clConc_SSC
+      ! Concentration of Br- and Cl- in the variious aerosols (mol/L)
+      Real(fp)           :: brM_Base
+      Real(fp)           :: brICl_M,    clICl_M,    IICl_M
+      Real(fp)           :: brLCl_M,    clLCl_M,    ILCl_M
+      Real(fp)           :: brFine_M,   clFine_M,   IFine_M
+      Real(fp)           :: brCoarse_M, clCoarse_M, ICoarse_M
 
       ! NO3- concentration in fine aerosol (for N2O5)
-      Real(fp)           :: NO3Conc_Fine
+      Real(fp)           :: NO3M_Fine
 
       ! Variables read from State_Chm
       Real(fp)           :: pHCloud, pHFine
       Real(fp)           :: SSAlk(2)
+
+      ! Partitioning
+      Real(fp)           :: LClPtn, IClPtn
 
       ! Debug
       Integer, Parameter :: IMax=50
@@ -402,8 +404,11 @@ MODULE GCKPP_HETRATES
       !  under the new scheme (SDE 2016-12-21)
       !--------------------------------------------------------------------
 
-      ! Get cloud physical parameters
-      Call Cld_Params( I, J, L, XDenA, VAir, TempK, QLiq, QIce, SM, &
+      ! Get cloud physical parameters:
+      !  rX:   Radius (cm)
+      !  AX:   Area density (cm2/cm3 air)
+      !  VX:   Volume density (cm3/cm3 air)
+      Call Cld_Params( I, J, L, QLiq, QIce, SM, &
                        rLiq,  ALiq,  VLiq, rIce,  AIce,  VIce )
 
       ! Retrieve cloud pH, fine aerosol pH, and sea salt alkalinity
@@ -416,39 +421,32 @@ MODULE GCKPP_HETRATES
       ! chemistry.
       SSAlk(1:2) = SC%SSAlk(I,J,L,1:2)
 
-      ! Estimate liquid phase pH (H+ concentration)
-      hConc_Fine = 10.0**(-1.0e+0_fp*pHFine) 
-      hConc_LCl  = 10.0**(-1.0e+0_fp*pHCloud)
-      hConc_ICl  = 10.0**(-4.5e+0_fp) 
-      hConc_SSC  = 10.0**(-5.0e+0_fp)
+      ! Estimate liquid phase pH (H+ concentration in mol/L)
+      hConcFine_M   = 10.0**(-1.0e+0_fp*pHFine) 
+      hConcLCl_M    = 10.0**(-1.0e+0_fp*pHCloud)
+      hConcICl_M    = 10.0**(-4.5e+0_fp) 
+      hConcCoarse_M = 10.0**(-5.0e+0_fp)
 
-      ! If not using BrAq, manually set a depleted Br- concentration (mol/l)
+      ! If not using BrAq, manually set a depleted Br- concentration (mol/L)
       useSaltBr = ((.not.fixedSaltBr).and.(ind_('BrAq') > 0))
       If (useSaltBr) Then
-         brConc_Base = 0.0e+0_fp
+         brM_Base = 0.0e+0_fp
       Else
-         brConc_Base = 1.0e+4_fp
+         brM_Base = 1.0e+4_fp
       End If 
 
-      ! Get the concentration of Br/Cl in clouds
-      Call Get_Halide_CldConc(spcVec(ind_('HBr')),spcVec(ind_('HCl')),&
-                              VLiq, VIce, VAir, TempK, xArea(8), xRadi(8),&
-                              brConc_Cld, clConc_Cld)
-
-      ! Get concentration of Br in each aerosol type (molec/cm3)
+      ! Get concentration of Br in each aerosol type (mol/L)
       brGas    = spcVec(ind_('HBr'))
       brAq     = spcVec(ind_('BrAq'))
       brCoarse = spcVec(ind_('BrCoarse'))
       ! Don't involve coarse-mode Br
       brTot = brGas + brAq
-      ! Get partitioning data
-      LClPtn  = State_Chm%AqPtn(I,J,L,1,2)
-      IClPtn  = State_Chm%AqPtn(I,J,L,1,3)
-      FinePtn = State_Chm%AqPtn(I,J,L,1,4)
-      Call Get_Halide_Molarity( brTot,      TK,                      &
-                                VLiq,       VIce,       VAir,        &
-                                LClPtn,     IClPtn,     FinePtn,     &
-                                brConc_LCl, brConc_ICl, brConc_Fine )
+      ! Get partitioning data for HBr
+      LClPtn  = SC%AqPtn(I,J,L,1,2)
+      IClPtn  = SC%AqPtn(I,J,L,1,3)
+
+      Call Get_Halide_Molarity( brGas, brAq, brCoarse, LClPtn, IClPtn, VLiq, VIce, &
+                                brLCl_M, brICl_M, brFine_M, brCoarse_M )
 
       ! Now Cl-
       clGas    = spcVec(ind_('HCl'))
@@ -456,14 +454,12 @@ MODULE GCKPP_HETRATES
       clCoarse = spcVec(ind_('ClCoarse'))
       ! Don't involve coarse-mode Cl
       clTot = clGas + clAq
-      ! Get partitioning data
-      LClPtn  = State_Chm%AqPtn(I,J,L,2,2)
-      IClPtn  = State_Chm%AqPtn(I,J,L,2,3)
-      FinePtn = State_Chm%AqPtn(I,J,L,2,4)
-      Call Get_Halide_Molarity( clTot,      TK,                      &
-                                VLiq,       VIce,       VAir,        &
-                                LClPtn,     IClPtn,     FinePtn,     &
-                                clConc_LCl, clConc_ICl, clConc_Fine )
+      ! Get partitioning data for HCl
+      LClPtn  = SC%AqPtn(I,J,L,2,2)
+      IClPtn  = SC%AqPtn(I,J,L,2,3)
+
+      Call Get_Halide_Molarity( clGas, clAq, clCoarse, LClPtn, IClPtn, VLiq, VIce, &
+                                clLCl_M, clICl_M, clFine_M, clCoarse_M )
 
       ! Finally I-
       IGas    = spcVec(ind_('HI'))
@@ -471,14 +467,12 @@ MODULE GCKPP_HETRATES
       ICoarse = spcVec(ind_('ICoarse'))
       ! Don't involve coarse-mode Cl
       ITot = IGas + IAq
-      ! Get partitioning data
-      LClPtn  = State_Chm%AqPtn(I,J,L,3,2)
-      IClPtn  = State_Chm%AqPtn(I,J,L,3,3)
-      FinePtn = State_Chm%AqPtn(I,J,L,3,4)
-      Call Get_Halide_Molarity( ITot,       TK,                      &
-                                VLiq,       VIce,       VAir,        &
-                                LClPtn,     IClPtn,     FinePtn,     &
-                                IConc_LCl,  IConc_ICl,  IConc_Fine  )
+      ! Get partitioning data for HI
+      LClPtn  = SC%AqPtn(I,J,L,3,2)
+      IClPtn  = SC%AqPtn(I,J,L,3,3)
+
+      Call Get_Halide_Molarity( IGas, IAq, ICoarse, LClPtn, IClPtn, VLiq, VIce, &
+                                ILCl_M, IICl_M, IFine_M, ICoarse_M )
 
       ! This isn't used any more
       ki_hbr = 0e+0_fp
@@ -495,114 +489,127 @@ MODULE GCKPP_HETRATES
       HET(ind_NO2,   1) = HETNO2( 4.60E1_fp, 1E-4_fp)
       HET(ind_NO3,   1) = HETNO3( 6.20E1_fp, 1E-1_fp)
 
+      ! A subtle reminder to myself... 
+      If ((I==1).and.(J==1).and.(L==1)) Then
+         Write(6,'(a)') '!!===WARNING WARNING WARNING WARNING WARNING====!!'
+         Write(6,'(a)') '!!                                              !!'
+         Write(6,'(a)') '!! N2O5 reaction does not branch between ClNO2  !!'
+         Write(6,'(a)') '!!             and HNO3 production              !!'
+         Write(6,'(a)') '!!                                              !!'
+         Write(6,'(a)') '!!===WARNING WARNING WARNING WARNING WARNING====!!'
+      End If
       ! Now calculate reaction rates where the educt can be consumed.
       ! kIIR1Ltd: Assume that the first reactant is limiting. Assume that the
       ! second reactant is "abundant" and calculate the overall rate based on
       ! the uptake rate of the first reactant only.
       HET(ind_N2O5,  1) = kIIR1Ltd( spcVec, ind_('N2O5'),  ind_('H2O'), HETN2O5(1.08E2_fp, 1E-1_fp))
 
-      ! Br/Cl heterogeneous chemistry
-      If (ind_('ClNO3') > 0) Then
-
-         ! New calculation for ClNO3 and BrNO3 hydrolysis (SDE 2016-12-21)
-         kITemp = HETBrNO3_JS( XDenA, rLiq, rIce, ALiq, AIce, TempK )
-         HET(ind_BrNO3, 1) = kIIR1Ltd( spcVec, ind_('BrNO3'), ind_('H2O'), kITemp, hetMinLife)
-         kITemp = HETClNO3_JS( XDenA, rLiq, rIce, ALiq, AIce, TempK )
-         HET(ind_ClNO3, 1) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('H2O'), kITemp, hetMinLife)
-
-         ! HOBr + Br- taking place on/in fine aerosol..?
-         ! New calculation for HOBr + HBr (TS index: hhc06)
-         kITemp = HETHOBr_HBr_JS( XDenA, rLiq, rIce, ALiq, AIce, VAir, TempK, &
-                           hConc_Sul, hConc_LCl, hConc_ICl, brConc_Cld )
-         HET(ind_HOBr,  1) = kIIR1Ltd( spcVec, ind_('HOBr'),  ind_('HBr'), kITemp, hetMinLife)
-
-         ! New calculation for HOBr + HCl (TS index: hhc03)
-         kITemp = HETHOBr_HCl_JS( XDenA, rLiq, rIce, ALiq, AIce, VAir, TempK, &
-                           hConc_Sul, hConc_LCl, hConc_ICl, clConc_Cld )
-         HET(ind_HOBr,  2) = kIIR1Ltd( spcVec, ind_('HOBr'),  ind_('HCl'), kITemp, hetMinLife)
-
-         ! New calculation for HOBr + BrSalA/C (TS index: hhc07/08)
-         ! NOTE: This has not been fully tested, as the initial simulations had
-         ! near-zero BrSALA and BrSALC  
-         kITemp = HETHOBr_SS_JS( XDenA, xRadi(11), xArea(11), SSAlk(1), TempK, &
-                           hConc_SSA, brConc_SSA, 2 )
-         HET(ind_HOBr,  4) = kIIR1Ltd( spcVec, ind_('HOBr'),  ind_('BrSALA'), kITemp, hetMinLife)
-
-         kITemp = HETHOBr_SS_JS( XDenA, xRadi(12), xArea(12), SSAlk(2), TempK, &
-                           hConc_SSC, brConc_SSC, 2 )
-         HET(ind_HOBr,  5) = kIIR1Ltd( spcVec, ind_('HOBr'),  ind_('BrSALC'), kITemp, hetMinLife)
-
-         ! New calculation for HOBr + ClSALA/C (TS index: hhc04/05)
-         ! NOTE: Cl- in salt is assumed to always be in excess, so we assume a
-         ! molarity of 0.5 mol/L. This reaction is also pseudo-first order, so 
-         ! conversion to a second-order rate constant is not necessary.
-         kITemp =          HETHOBr_SS_JS( XDenA, xRadi(11), xArea(11), SSAlk(1), &
-                                   TempK, hConc_SSA, 0.5e+0_fp, 1 )
-         kITemp = kITemp + HETHOBr_SS_JS( XDenA, xRadi(12), xArea(12), SSAlk(2), &
-                                   TempK, hConc_SSC, 0.5e+0_fp, 1 )
-         HET(ind_HOBr,  3) = kITemp
-
-         ! New calculation for ClNO3 + BrSALX (TS index: hhc10/11)
-         ! NOTE: This has not been fully tested, as the initial simulations had
-         ! near-zero BrSALA and BrSALC  
-         kITemp = HETClNO3_SS_JS( XDenA, xRadi(11), xArea(11), SSAlk(1), &
-                                  TempK, brConc_SSA)
-         HET(ind_ClNO3, 4) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('BrSALA'), kITemp, hetMinLife)
-         kITemp = HETClNO3_SS_JS( XDenA, xRadi(12), xArea(12), SSAlk(2), &
-                                  TempK, brConc_SSC)
-         HET(ind_ClNO3, 5) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('BrSALC'), kITemp, hetMinLife)
-
-         ! Extended calculation for ClNO3 + HCl
-         HET(ind_ClNO3, 2) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('HCl'), HETClNO3_HCl( 0.97E2_fp, 0E+0_fp), hetMinLife)
-
-         ! New calculation for ClNO3 + HBr (TS index: hhc09)
-         kITemp = HETClNO3_HBr_JS( xDenA, rLiq, rIce, ALiq, AIce, VAir, TempK, brConc_Cld )
-         HET(ind_ClNO3, 3) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('HBr'), kITemp, hetMinLife)
-
-         ! Extend HOCl + HCl and HOCl + HBr to take place in the troposphere
-         HET(ind_HOCl,  1) = kIIR1Ltd( spcVec, ind_('HOCl'),  ind_('HCl'), HETHOCl_HCl(  0.52E2_fp, 0E+0_fp), hetMinLife)
-         HET(ind_HOCl,  2) = kIIR1Ltd( spcVec, ind_('HOCl'),  ind_('HBr'), HETHOCl_HBr(  0.52E2_fp, 0E+0_fp), hetMinLife)
-
-         ! New O3 + Br- calculation (TS index: hhc12)
-         kITemp = HETO3_HBr_JS( XDenA, rLiq, rIce, ALiq, AIce, VAir, TempK, brConc_Cld, spcVec(ind_('O3')))
-         HET(ind_O3,    1) = kIIR1Ltd( spcVec, ind_('O3'),    ind_('HBr'), kITemp, hetMinLife)
-
-         ! New O3 + BrSALX calculations (TS index: hhc13/14)
-         kITemp = HETO3_SS_JS( XDenA, xRadi(11), xArea(11), SSAlk(1), &
-                               TempK, brConc_SSA, spcVec(ind_('O3')))
-         HET(ind_O3,    2) = kIIR1Ltd( spcVec, ind_('O3'), ind_('BrSALA'), kITemp, hetMinLife)
-         kITemp = HETO3_SS_JS( XDenA, xRadi(12), xArea(12), SSAlk(2), &
-                               TempK, brConc_SSC, spcVec(ind_('O3')))
-         HET(ind_O3,    3) = kIIR1Ltd( spcVec, ind_('O3'), ind_('BrSALC'), kITemp, hetMinLife)
-
-         ! New Cl uptake calculations (TS index: hhc15/16)
-         ! Cl is always assumed to be in excess in sea salt, so any HCl "taken
-         ! up" is just removed. This may change in the future. This reaction is
-         ! also first order, so no kII calculation is required
-         kITemp = HETHXUptake_JS( XDenA, xRadi(11), xArea(11), TempK, 1)
-         HET(ind_HCl,   1) = kITemp
-         kITemp = HETHXUptake_JS( XDenA, xRadi(12), xArea(12), TempK, 1)
-         HET(ind_HCl,   2) = kITemp
-
-         ! New Br uptake calculation - forms BrSALX (TS index: hhc17/18)
-         ! First-order reactions, no calculation of kII required
-         kITemp = HETHXUptake_JS( XDenA, xRadi(11), xArea(11), TempK, 2)
-         HET(ind_HBr,   1) = kITemp
-         kITemp = HETHXUptake_JS( XDenA, xRadi(12), xArea(12), TempK, 2)
-         HET(ind_HBr,   2) = kITemp
-
-         ! Extended calculation for BrNO3 + HCl into the troposphere
-         HET(ind_BrNO3, 2) = kIIR1Ltd( spcVec, ind_('BrNO3'), ind_('HCl'), HETBrNO3_HCl(  1.42E2_fp, 0E+0_fp), hetMinLife)
-
-         ! New/extended calculation of N2O5 + HCl on sulfate
-         kITemp = HETN2O5_HCl( 1.08E2_fp, 0.0e+0_fp ) 
-         HET(ind_N2O5,  2) = kIIR1Ltd( spcVec, ind_('N2O5'), ind_('HCl'), kITemp, hetMinLife) 
-
-         ! New calculation - reaction of N2O5 with sea-salt Cl- (assumed to be
-         ! in excess, so no kII calculation)
-         HET(ind_N2O5,  3) = kIIR1Ltd( spcVec, ind_('N2O5'),  ind_('ClAq'),HETN2O5_SS(1.08E2_fp, 1E-1_fp)
-
-      End If
+      ! Br/Cl chemistry disabled for now
+      ! Need to adjust for:
+      ! -> VLiq and VIce are now cm3/cm3
+      ! -> Now have separated molarities in each aerosol type
+!      ! Br/Cl heterogeneous chemistry
+!      If (ind_('ClNO3') > 0) Then
+!
+!         ! New calculation for ClNO3 and BrNO3 hydrolysis (SDE 2016-12-21)
+!         kITemp = HETBrNO3_JS( XDenA, rLiq, rIce, ALiq, AIce, TempK )
+!         HET(ind_BrNO3, 1) = kIIR1Ltd( spcVec, ind_('BrNO3'), ind_('H2O'), kITemp, hetMinLife)
+!         kITemp = HETClNO3_JS( XDenA, rLiq, rIce, ALiq, AIce, TempK )
+!         HET(ind_ClNO3, 1) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('H2O'), kITemp, hetMinLife)
+!
+!         ! HOBr + Br- taking place on/in fine aerosol..?
+!         ! New calculation for HOBr + HBr (TS index: hhc06)
+!         kITemp = HETHOBr_HBr_JS( XDenA, rLiq, rIce, ALiq, AIce, VAir, TempK, &
+!                           hConc_Sul, hConc_LCl, hConc_ICl, brConc_Cld )
+!         HET(ind_HOBr,  1) = kIIR1Ltd( spcVec, ind_('HOBr'),  ind_('HBr'), kITemp, hetMinLife)
+!
+!         ! New calculation for HOBr + HCl (TS index: hhc03)
+!         kITemp = HETHOBr_HCl_JS( XDenA, rLiq, rIce, ALiq, AIce, VAir, TempK, &
+!                           hConc_Sul, hConc_LCl, hConc_ICl, clConc_Cld )
+!         HET(ind_HOBr,  2) = kIIR1Ltd( spcVec, ind_('HOBr'),  ind_('HCl'), kITemp, hetMinLife)
+!
+!         ! New calculation for HOBr + BrSalA/C (TS index: hhc07/08)
+!         ! NOTE: This has not been fully tested, as the initial simulations had
+!         ! near-zero BrSALA and BrSALC  
+!         kITemp = HETHOBr_SS_JS( XDenA, xRadi(11), xArea(11), SSAlk(1), TempK, &
+!                           hConc_SSA, brConc_SSA, 2 )
+!         HET(ind_HOBr,  4) = kIIR1Ltd( spcVec, ind_('HOBr'),  ind_('BrSALA'), kITemp, hetMinLife)
+!
+!         kITemp = HETHOBr_SS_JS( XDenA, xRadi(12), xArea(12), SSAlk(2), TempK, &
+!                           hConc_Coarse, brConc_SSC, 2 )
+!         HET(ind_HOBr,  5) = kIIR1Ltd( spcVec, ind_('HOBr'),  ind_('BrSALC'), kITemp, hetMinLife)
+!
+!         ! New calculation for HOBr + ClSALA/C (TS index: hhc04/05)
+!         ! NOTE: Cl- in salt is assumed to always be in excess, so we assume a
+!         ! molarity of 0.5 mol/L. This reaction is also pseudo-first order, so 
+!         ! conversion to a second-order rate constant is not necessary.
+!         kITemp =          HETHOBr_SS_JS( XDenA, xRadi(11), xArea(11), SSAlk(1), &
+!                                   TempK, hConc_SSA, 0.5e+0_fp, 1 )
+!         kITemp = kITemp + HETHOBr_SS_JS( XDenA, xRadi(12), xArea(12), SSAlk(2), &
+!                                   TempK, hConc_Coarse, 0.5e+0_fp, 1 )
+!         HET(ind_HOBr,  3) = kITemp
+!
+!         ! New calculation for ClNO3 + BrSALX (TS index: hhc10/11)
+!         ! NOTE: This has not been fully tested, as the initial simulations had
+!         ! near-zero BrSALA and BrSALC  
+!         kITemp = HETClNO3_SS_JS( XDenA, xRadi(11), xArea(11), SSAlk(1), &
+!                                  TempK, brConc_SSA)
+!         HET(ind_ClNO3, 4) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('BrSALA'), kITemp, hetMinLife)
+!         kITemp = HETClNO3_SS_JS( XDenA, xRadi(12), xArea(12), SSAlk(2), &
+!                                  TempK, brConc_SSC)
+!         HET(ind_ClNO3, 5) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('BrSALC'), kITemp, hetMinLife)
+!
+!         ! Extended calculation for ClNO3 + HCl
+!         HET(ind_ClNO3, 2) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('HCl'), HETClNO3_HCl( 0.97E2_fp, 0E+0_fp), hetMinLife)
+!
+!         ! New calculation for ClNO3 + HBr (TS index: hhc09)
+!         kITemp = HETClNO3_HBr_JS( xDenA, rLiq, rIce, ALiq, AIce, VAir, TempK, brConc_Cld )
+!         HET(ind_ClNO3, 3) = kIIR1Ltd( spcVec, ind_('ClNO3'), ind_('HBr'), kITemp, hetMinLife)
+!
+!         ! Extend HOCl + HCl and HOCl + HBr to take place in the troposphere
+!         HET(ind_HOCl,  1) = kIIR1Ltd( spcVec, ind_('HOCl'),  ind_('HCl'), HETHOCl_HCl(  0.52E2_fp, 0E+0_fp), hetMinLife)
+!         HET(ind_HOCl,  2) = kIIR1Ltd( spcVec, ind_('HOCl'),  ind_('HBr'), HETHOCl_HBr(  0.52E2_fp, 0E+0_fp), hetMinLife)
+!
+!         ! New O3 + Br- calculation (TS index: hhc12)
+!         kITemp = HETO3_HBr_JS( XDenA, rLiq, rIce, ALiq, AIce, VAir, TempK, brConc_Cld, spcVec(ind_('O3')))
+!         HET(ind_O3,    1) = kIIR1Ltd( spcVec, ind_('O3'),    ind_('HBr'), kITemp, hetMinLife)
+!
+!         ! New O3 + BrSALX calculations (TS index: hhc13/14)
+!         kITemp = HETO3_SS_JS( XDenA, xRadi(11), xArea(11), SSAlk(1), &
+!                               TempK, brConc_SSA, spcVec(ind_('O3')))
+!         HET(ind_O3,    2) = kIIR1Ltd( spcVec, ind_('O3'), ind_('BrSALA'), kITemp, hetMinLife)
+!         kITemp = HETO3_SS_JS( XDenA, xRadi(12), xArea(12), SSAlk(2), &
+!                               TempK, brConc_SSC, spcVec(ind_('O3')))
+!         HET(ind_O3,    3) = kIIR1Ltd( spcVec, ind_('O3'), ind_('BrSALC'), kITemp, hetMinLife)
+!
+!         ! New Cl uptake calculations (TS index: hhc15/16)
+!         ! Cl is always assumed to be in excess in sea salt, so any HCl "taken
+!         ! up" is just removed. This may change in the future. This reaction is
+!         ! also first order, so no kII calculation is required
+!         kITemp = HETHXUptake_JS( XDenA, xRadi(11), xArea(11), TempK, 1)
+!         HET(ind_HCl,   1) = kITemp
+!         kITemp = HETHXUptake_JS( XDenA, xRadi(12), xArea(12), TempK, 1)
+!         HET(ind_HCl,   2) = kITemp
+!
+!         ! New Br uptake calculation - forms BrSALX (TS index: hhc17/18)
+!         ! First-order reactions, no calculation of kII required
+!         kITemp = HETHXUptake_JS( XDenA, xRadi(11), xArea(11), TempK, 2)
+!         HET(ind_HBr,   1) = kITemp
+!         kITemp = HETHXUptake_JS( XDenA, xRadi(12), xArea(12), TempK, 2)
+!         HET(ind_HBr,   2) = kITemp
+!
+!         ! Extended calculation for BrNO3 + HCl into the troposphere
+!         HET(ind_BrNO3, 2) = kIIR1Ltd( spcVec, ind_('BrNO3'), ind_('HCl'), HETBrNO3_HCl(  1.42E2_fp, 0E+0_fp), hetMinLife)
+!
+!         ! New/extended calculation of N2O5 + HCl on sulfate
+!         kITemp = HETN2O5_HCl( 1.08E2_fp, 0.0e+0_fp ) 
+!         HET(ind_N2O5,  2) = kIIR1Ltd( spcVec, ind_('N2O5'), ind_('HCl'), kITemp, hetMinLife) 
+!
+!         ! New calculation - reaction of N2O5 with sea-salt Cl- (assumed to be
+!         ! in excess, so no kII calculation)
+!         HET(ind_N2O5,  3) = kIIR1Ltd( spcVec, ind_('N2O5'),  ind_('ClAq'),HETN2O5_SS(1.08E2_fp, 1E-1_fp)
+!
+!      End If
 
       ! Iodine chemistry
       If (ind_('I2').gt.0) Then
@@ -630,42 +637,53 @@ MODULE GCKPP_HETRATES
 
          ! HOI, IONO and IONO2 will not be taken up on acidic aerosol, instead
          ! going through the alternative reaction path (below)
-         HET(ind_HOI,  1) = HETAlkLimit(1.44E2_fp,0.01e+0_fp,11,aerAlk=SSAlk(1),alkMin=0.05)
-         HET(ind_IONO, 1) = HETAlkLimit(1.73E2_fp,0.02e+0_fp,11,aerAlk=SSAlk(1),alkMin=0.05)
-         HET(ind_IONO2,1) = HETAlkLimit(1.89E2_fp,0.01e+0_fp,11,aerAlk=SSAlk(1),alkMin=0.05)
-         HET(ind_HOI,  2) = HETAlkLimit(1.44E2_fp,0.01e+0_fp,12,aerAlk=SSAlk(2),alkMin=0.05)
-         HET(ind_IONO, 2) = HETAlkLimit(1.73E2_fp,0.02e+0_fp,12,aerAlk=SSAlk(2),alkMin=0.05)
-         HET(ind_IONO2,2) = HETAlkLimit(1.89E2_fp,0.01e+0_fp,12,aerAlk=SSAlk(2),alkMin=0.05)
+         HET(ind_HOI,  1) = HETAlkLimit(1.44E2_fp,0.01e+0_fp,11,aerAlk=SSAlk(1),alkMin=0.05e+0_fp)
+         HET(ind_IONO, 1) = HETAlkLimit(1.73E2_fp,0.02e+0_fp,11,aerAlk=SSAlk(1),alkMin=0.05e+0_fp)
+         HET(ind_IONO2,1) = HETAlkLimit(1.89E2_fp,0.01e+0_fp,11,aerAlk=SSAlk(1),alkMin=0.05e+0_fp)
+         HET(ind_HOI,  2) = HETAlkLimit(1.44E2_fp,0.01e+0_fp,12,aerAlk=SSAlk(2),alkMin=0.05e+0_fp)
+         HET(ind_IONO, 2) = HETAlkLimit(1.73E2_fp,0.02e+0_fp,12,aerAlk=SSAlk(2),alkMin=0.05e+0_fp)
+         HET(ind_IONO2,2) = HETAlkLimit(1.89E2_fp,0.01e+0_fp,12,aerAlk=SSAlk(2),alkMin=0.05e+0_fp)
 
          ! Breakdown of iodine compounds on sea-salt
          ! HI, IONO and IONO2 will react only on acidic aerosol
-         kITemp = HETAlkLimit(1.44E2_fp,0.01E+0_fp,aerAlk=SSAlk(1),alkMax=0.05)
-         HET(ind_HOI,  3) = kIIR1Ltd( spcVec, ind_('HOI'  ), ind_('ClAq' ), kITemp, hetMinLife)
-         HET(ind_HOI,  5) = kIIR1Ltd( spcVec, ind_('HOI'  ), ind_('BrAq' ), kITemp, hetMinLife)
-         kITemp = HETAlkLimit(1.44E2_fp,0.01E+0_fp,aerAlk=SSAlk(2),alkMax=0.05)
-         HET(ind_HOI,  4) = kIIR1Ltd( spcVec, ind_('HOI'  ), ind_('ClAqC'), kITemp, hetMinLife)
-         HET(ind_HOI,  6) = kIIR1Ltd( spcVec, ind_('HOI'  ), ind_('BrAqC'), kITemp, hetMinLife)
+         kITemp = HETAlkLimit(1.44E2_fp,0.01E+0_fp,11,aerAlk=SSAlk(1),alkMax=0.05e+0_fp)
+         HET(ind_HOI,  3) = kIIR1Ltd( spcVec, ind_('HOI'  ), ind_('ClAq'    ), kITemp, hetMinLife)
+         HET(ind_HOI,  5) = kIIR1Ltd( spcVec, ind_('HOI'  ), ind_('BrAq'    ), kITemp, hetMinLife)
+         kITemp = HETAlkLimit(1.44E2_fp,0.01E+0_fp,12,aerAlk=SSAlk(2),alkMax=0.05e+0_fp)
+         HET(ind_HOI,  4) = kIIR1Ltd( spcVec, ind_('HOI'  ), ind_('ClCoarse'), kITemp, hetMinLife)
+         HET(ind_HOI,  6) = kIIR1Ltd( spcVec, ind_('HOI'  ), ind_('BrCoarse'), kITemp, hetMinLife)
 
-         kITemp = HETAlkLimit(1.73E2_fp,0.02E+0_fp,aerAlk=SSAlk(1),alkMax=0.05)
-         HET(ind_IONO, 3) = kIIR1Ltd( spcVec, ind_('IONO' ), ind_('ClAq' ), kITemp, hetMinLife)
-         HET(ind_IONO, 5) = kIIR1Ltd( spcVec, ind_('IONO' ), ind_('BrAq' ), kITemp, hetMinLife)
-         kITemp = HETAlkLimit(1.73E2_fp,0.02E+0_fp,aerAlk=SSAlk(2),alkMax=0.05)
-         HET(ind_IONO, 4) = kIIR1Ltd( spcVec, ind_('IONO' ), ind_('ClAqC'), kITemp, hetMinLife)
-         HET(ind_IONO, 6) = kIIR1Ltd( spcVec, ind_('IONO' ), ind_('BrAqC'), kITemp, hetMinLife)
+         kITemp = HETAlkLimit(1.73E2_fp,0.02E+0_fp,11,aerAlk=SSAlk(1),alkMax=0.05e+0_fp)
+         HET(ind_IONO, 3) = kIIR1Ltd( spcVec, ind_('IONO' ), ind_('ClAq'    ), kITemp, hetMinLife)
+         HET(ind_IONO, 5) = kIIR1Ltd( spcVec, ind_('IONO' ), ind_('BrAq'    ), kITemp, hetMinLife)
+         kITemp = HETAlkLimit(1.73E2_fp,0.02E+0_fp,12,aerAlk=SSAlk(2),alkMax=0.05e+0_fp)
+         HET(ind_IONO, 4) = kIIR1Ltd( spcVec, ind_('IONO' ), ind_('ClCoarse'), kITemp, hetMinLife)
+         HET(ind_IONO, 6) = kIIR1Ltd( spcVec, ind_('IONO' ), ind_('BrCoarse'), kITemp, hetMinLife)
 
-         kITemp = HETAlkLimit(1.89E2_fp,0.01E+0_fp,aerAlk=SSAlk(1),alkMax=0.05)
-         HET(ind_IONO2,3) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('ClAq' ), kITemp, hetMinLife)
-         HET(ind_IONO2,5) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('BrAq' ), kITemp, hetMinLife)
-         kITemp = HETAlkLimit(1.89E2_fp,0.01E+0_fp,aerAlk=SSAlk(2),alkMax=0.05)
-         HET(ind_IONO2,4) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('ClAqC'), kITemp, hetMinLife)
-         HET(ind_IONO2,6) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('BrAqC'), kITemp, hetMinLife)
-         
-         ! Recycling of iodine on ice clouds
+         kITemp = HETAlkLimit(1.89E2_fp,0.01E+0_fp,11,aerAlk=SSAlk(1),alkMax=0.05e+0_fp)
+         HET(ind_IONO2,3) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('ClAq'    ), kITemp, hetMinLife)
+         HET(ind_IONO2,5) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('BrAq'    ), kITemp, hetMinLife)
+         kITemp = HETAlkLimit(1.89E2_fp,0.01E+0_fp,12,aerAlk=SSAlk(2),alkMax=0.05e+0_fp)
+         HET(ind_IONO2,4) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('ClCoarse'), kITemp, hetMinLife)
+         HET(ind_IONO2,6) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('BrCoarse'), kITemp, hetMinLife)
+       
+         ! A subtle reminder to myself... 
+         If ((I==1).and.(J==1).and.(L==1)) Then
+            Write(6,'(a)') '!!===WARNING WARNING WARNING WARNING WARNING====!!'
+            Write(6,'(a)') '!!                                              !!'
+            Write(6,'(a)') '!! Recycling of iodine on ice clouds still uses !!'
+            Write(6,'(a)') '!! total HI, even though we have information on !!'
+            Write(6,'(a)') '!!             iodine partitioning              !!'
+            Write(6,'(a)') '!!                                              !!'
+            Write(6,'(a)') '!!===WARNING WARNING WARNING WARNING WARNING====!!'
+         End If
+ 
+         ! Recycling of iodine on ice clouds (tropospheric and stratospheric)
          ! IONO2 + H2O = HOI + HNO3
          kITemp = HETIXCycleIce(1.89E2_fp,0.10e+0_fp,rIce,AIce)
          HET(ind_IONO2,7) = kIIR1Ltd( spcVec, ind_('IONO2'), ind_('H2O'), kITemp, hetMinLife)
 
-         ! HOI + HX = IX + H2O on tropospheric and stratospheric ice
+         ! HOI + HX = IX + H2O
          kITemp = HETIXCycleIce(1.44E2_fp,0.12e+0_fp,rIce,AIce)
          HET(ind_HOI,  7) = kIIR1Ltd( spcVec, ind_('HOI'), ind_('HBr'), kITemp, hetMinLife)
          HET(ind_HOI,  8) = kIIR1Ltd( spcVec, ind_('HOI'), ind_('HI' ), kITemp, hetMinLife)
@@ -940,8 +958,8 @@ MODULE GCKPP_HETRATES
       ! Rate coefficients
       REAL(fp), INTENT(IN)                :: A, B
       Real(fp), Intent(In), Optional      :: aerAlk
-      Logical,  Intent(In), Optional      :: alkMin
-      Logical,  Intent(In), Optional      :: alkMax
+      Real(fp), Intent(In), Optional      :: alkMin
+      Real(fp), Intent(In), Optional      :: alkMax
       ! Which aerosol?
       Integer,  Intent(In)                :: N
 !
@@ -1524,7 +1542,7 @@ MODULE GCKPP_HETRATES
 !\\
 ! !INTERFACE:
 !
-    SUBROUTINE HETN2O5_Branch( AAer,   rAer, ClMol, NO3Mol, H2OMol, H2OAir, H2OMolPerL, &
+    SUBROUTINE HETN2O5_Branch( AAer,   rAer, ClMol, NO3Mol, H2OMol, H2OMolPerL, &
                                denAir, TK,   kIH2O, kICl )
 !
 ! !INPUT PARAMETERS: 
@@ -1586,7 +1604,15 @@ MODULE GCKPP_HETRATES
       ! Ratio of reaction 3 to reaction 4
       Real(fp), Parameter :: ratio34 = ratio32b/ratio42b
 
+      ! Overall sticking coefficient ("gamma")
+      Real(fp)            :: xStkCf
+
+      ! Overall loss rate of N2O5
+      Real(fp)            :: kISum
+
       ! Intermediate variables
+      Real(fp)            :: gammaDenom
+      Real(fp)            :: gammaFactor
       ! N2O5 dissociation rate factor (s-1)
       Real(fp)            :: N2O5DissocRate
       ! Fraction of N2O5 loss rate following each channel
@@ -1597,7 +1623,6 @@ MODULE GCKPP_HETRATES
       Real(fp)            :: H2ONO3Ratio
 
       ! Initialize
-      kISum        = 0.0e+0_fp
       XStkCf       = 0.0e+0_fp
       yCl          = 0.0e+0_fp
       yH2O         = 0.0e+0_fp
@@ -1605,7 +1630,7 @@ MODULE GCKPP_HETRATES
       ! Safety check - set uptake to 0.05 on dry aerosol
       If (H2OMol.le.1.0e-10_fp) Then
          ! Assume only ClNO2 + HNO3 channel is followed
-         XStkCf = 0.05e+0_f
+         XStkCf = 0.05e+0_fp
          kISum = Arsl1K(AAer,rAer,denAir,XStkCf,TK,XSqM)
          kIH2O = 0.0e+0_fp
          kICl  = 1.0e+0_fp
@@ -1666,7 +1691,7 @@ MODULE GCKPP_HETRATES
       !   N2O5 + Cl- = HNO3 + ClNO2
       kICl  = kISum * yCl
 
-    END FUNCTION HETN2O5_Branch
+    END SUBROUTINE HETN2O5_Branch
 !EOC
 !------------------------------------------------------------------------------
 !                  GEOS-Chem Global Chemical Transport Model                  !
@@ -4009,14 +4034,14 @@ MODULE GCKPP_HETRATES
 ! !IROUTINE: cld_params
 !
 ! !DESCRIPTION: Subroutine CLD_PARAMS returns ice and liquid cloud 
-!  parameters based on State_Met.off of cloud particles.
+!  parameters based on State_Met.
 !\\
 !\\
 ! !INTERFACE:
 !
-    SUBROUTINE CLD_PARAMS( I,      J,      L,    DENAIR,            &
-                           VAir,   T,      QL,   QI,     State_Met, &
-                           rLiq,   ALiq,   VLiq, &
+    SUBROUTINE CLD_PARAMS( I,      J,      L,         &
+                           QL,     QI,     State_Met, &
+                           rLiq,   ALiq,   VLiq,      &
                            rIce,   AIce,   VIce )
 
 !
@@ -4029,9 +4054,6 @@ MODULE GCKPP_HETRATES
       INTEGER,        INTENT(IN)  :: I         ! Longitude index
       INTEGER,        INTENT(IN)  :: J         ! Latitude  index
       INTEGER,        INTENT(IN)  :: L         ! Altitude  index
-      REAL(fp),       INTENT(IN)  :: DENAIR    ! Density of air [#/cm3]
-      REAL(fp),       INTENT(IN)  :: VAir      ! Volume of air [cm3]
-      REAL(fp),       INTENT(IN)  :: T         ! Temperature [K]
       REAL(fp),       INTENT(IN)  :: QL, QI    ! Cloud water mixing ratio [kg/kg]
       TYPE(MetState), INTENT(IN)  :: State_Met ! Meteorology State object
 !
@@ -4081,29 +4103,20 @@ MODULE GCKPP_HETRATES
       REAL(fp)            :: AREA_I     ! Surface area (ice) )         [cm2/cm3]
       REAL(fp)            :: Vcl, Vci   ! Volume of the cloud (liq and ice) [cm3]
       Real(fp)            :: MX         ! Molar mass                   [kg/mol]
-      LOGICAL             :: IS_LAND, IS_ICE, Is_Warm
-   
-      ! Pointers
-      REAL(fp), POINTER   :: AD(:,:,:)
-      REAL(fp), POINTER   :: CLDF(:,:,:)
-      REAL(fp), POINTER   :: FRLAND(:,:)
-      REAL(fp), POINTER   :: FROCEAN(:,:)
+      Real(fp)            :: CldF       ! 3D cloud fraction            [-]
 
+      ! Are we over continental land?
+      LOGICAL             :: Is_Cont
+   
       !=================================================================
       ! CLD_PARAMS begins here!
       !=================================================================
-
-      ! Initialize pointers
-      AD      => State_Met%AD
-      CLDF    => State_Met%CLDF
-      FRLAND  => State_Met%FRLAND
-      FROCEAN => State_Met%FROCEAN
 
       ! Fixed for now
       rIce = xCldrIce
  
       ! Quick test - is there any cloud?
-      If (((QL.le.0.0e+0_fp).and.(QL.le.0.0e+0_fp)).or.(CLDF(I,J,L).le.0.0e+0_fp)) Then
+      If (((QL.le.0.0e+0_fp).and.(QI.le.0.0e+0_fp)).or.(CLDF.le.0.0e+0_fp)) Then
          rLiq = xCldR_Cont
          ALiq = 0.0e+0_fp
          VLiq = 0.0e+0_fp
@@ -4112,126 +4125,21 @@ MODULE GCKPP_HETRATES
          Return
       End If
 
-      ! -- IS THIS LAND? -- (Adapted from DAO_MOD function)
+      ! Is this land? (Adapted from DAO_MOD function)
 #if   defined( GCAP )
-
-      !--------------------------
-      ! GCAP
-      !--------------------------
-
       ! It's a land box if 50% or more of the box is covered by 
       ! land and less than 50% of the box is covered by ice
-      IS_LAND = ( State_Met%LWI_GISS(I,J) >= 0.5e+0_fp .and. &
+      Is_Cont = ( State_Met%LWI_GISS(I,J) >= 0.5e+0_fp .and. &
                   State_Met%SNICE(I,J)    <  0.5e+0_fp )
-
+#elif defined( GEOS_5 ) || defined( MERRA ) || defined( GEOS_FP )
+      Is_Cont = (State_Met%FRLAND(I,J) > State_Met%FROCEAN(I,J))
 #else
-
-      !--------------------------
-      ! GEOS-4 / GEOS-5 / MERRA
-      !--------------------------
-
       ! LWI=1 and ALBEDO less than 69.5% is a LAND box 
-      IS_LAND = ( NINT( State_Met%LWI(I,J) ) == 1       .and. &
+      Is_Cont = ( NINT( State_Met%LWI(I,J) ) == 1       .and. &
                      State_Met%ALBD(I,J)  <  0.695e+0_fp )
-
 #endif
-      ! Done with 'Is this land' ---------------------
-      ! -- IS THIS ICE? -- (Adapted from DAO_MOD function)
-#if   defined( GCAP )
 
-      !--------------------------
-      ! GCAP
-      !--------------------------
-
-      ! It's an ice box if 50% or more of the box is covered by ice
-      IS_ICE = ( State_Met%SNICE(I,J) >= 0.5e+0_fp )
-
-#else
-
-      !--------------------------
-      ! GEOS-4 / GEOS-5 / MERRA
-      !--------------------------
-
-      ! LWI=2 or ALBEDO > 69.5% is ice
-      IS_ICE = ( NINT( State_Met%LWI(I,J) ) == 2       .or. &
-                    State_Met%ALBD(I,J)  >= 0.695e+0_fp )
-
-#endif
-      ! Done with 'Is this ice' ---------------------
-
-      ! ----------------------------------------------
-      ! Test conditions to see if we want to continue
-      ! with respect to liquid clouds.
-      ! ----------------------------------------------
-
-      ! continental or marine clouds only...
-#if defined( GEOS_5 ) || defined( MERRA ) || defined( GEOS_FP )
-      IF ( (FRLAND (I,J) > 0) .or. (FROCEAN(I,J) > 0) ) THEN
-#else
-      ! Above line is to skip over land ice (Greenland and Antartica). This
-      ! should do the same (and also work for GEOS-5, but leave above for now).
-      IF ( IS_LAND .and. .not. IS_ICE  ) THEN
-#endif
-         ! do we have clouds? and do we have warm temperatures?
-         Is_Warm = ((CLDF(I,J,L) > 0) .and. (T > 258.0))
-      ELSE
-         Is_Warm = .FALSE.
-      ENDIF
-
-      ! ----------------------------------------------
-      !   calculate the surface area of cloud droplets
-      !   in the given grid box, assuming 1 of 2
-      !   conditions:
-      !     a. marine warm cloud
-      !       or
-      !     b. continental warm cloud
-      !
-      !
-      !   * Calculation for area is derived follows,
-      !     assuming that RADIUS is constant:
-      !
-      !                         4/3 (pi) (RADIUS)**3
-      !  1) FC = Vc / Vb = N  -------------------------
-      !                                  Vb
-      !
-      !
-      !       where N      = number of cloud droplets
-      !             RADIUS = radius of cloud droplet
-      !             Vc     = volumn of the cloud
-      !             Vb     = volumn of the box = AIRVOL (in GEOS-Chem)
-      !
-      !
-      !                     Vb
-      !  2) N = FC --------------------
-      !            4/3 (pi) (RADIUS)**3
-      !
-      !
-      !  So the surface area [m2] is calculated as
-      !
-      !  3) total surface A = N * 4 * (pi) * (RADIUS)**2
-      !
-      !                  3*Vb
-      !          = FC ----------
-      !                 RADIUS
-      !
-      !  4) for this routine though we want
-      !     AREA in [cm2/cm3], surface area to volume air:
-      !
-      !                   3
-      !     AREA = FC ---------
-      !                RADIUS (in cm)
-      !
-      !
-      !    or    
-      !                   3 x Vc
-      !     AREA =  -----------------
-      !              AIRVOL x RADIUS      (in cm)
-      ! ----------------------------------------------
-#if defined( GEOS_5 ) || defined( MERRA ) || defined( GEOS_FP )
-      IF ( FRLAND(I,J) > FROCEAN(I,J) ) THEN
-#else
-      IF ( IS_LAND ) THEN
-#endif
+      IF ( Is_Cont ) THEN
          ! Continental cloud droplet radius [cm]
          rLiq = XCLDR_CONT
       ELSE
@@ -4239,32 +4147,26 @@ MODULE GCKPP_HETRATES
          rLiq = XCLDR_MARI
       ENDIF
 
-      ! get the volume of cloud [cm3]
-#if defined( GEOS_5 ) || defined( MERRA ) || defined( GEOS_FP )
-      ! QL is [g/g]
-      VLiq = CLDF(I,J,L) * QL * AD(I,J,L) / dens_h2o
-      VIce = CLDF(I,J,L) * QI * AD(I,J,L) / dens_h2o
+      ! Defined QL and QI as m3 H2O/m3 air in-cloud
+#if defined( GEOS_5 ) || defined( MERRA) || defined( GEOS_FP) || defined( MERRA2 )
+      ! In GEOS-5, QL is [kg H2O/kg air]; convert to m3/m3, assuming a density
+      ! of 1000 kg/m3 for water
+      VLiq = State_Met%QL(I,J,L) * State_Met%AirDen(I,J,L) * 1.0e-3_fp 
+      VIce = State_Met%QI(I,J,L) * State_Met%AirDen(I,J,L) * 1.0e-3_fp 
 #else
-      ! QL is [cm3/cm3]
-      VLiq = CLDF(I,J,L) * QL * VAir
-      VIce = CLDF(I,J,L) * QI * VAir
+      ! Otherwise, QL is [m3 H2O/m3 air]; no conversion necessary
+      VLiq = State_Met%QL(I,J,L)
+      VIce = State_Met%QI(I,J,L)
 #endif
+
+      ! Convert from in-cloud to grid-box quantities
+      VLiq = State_Met%CLDF(I,J,L) * VLiq 
+      VIce = State_Met%CLDF(I,J,L) * VIce 
   
-      ! Only want warm (continental or marine) liquid clouds
-      IF ( .not. Is_Warm ) THEN
-         VLiq = 0.e+0_fp
-      ENDIF
-
-      ! now calculate the cloud droplet surface area density
+      ! Now, calculate the cloud droplet surface area density
       ! ALiq and AIce are in cm2/cm3
-      ALiq = 3.e+0_fp * (VLiq/VAir) / rLiq ! keep Radius in [cm]
-      AIce = 3.e+0_fp * (VIce/VAir) / rIce ! keep Radius in [cm]
-
-      ! Free Pointers
-      NULLIFY( AD      )
-      NULLIFY( CLDF    )
-      NULLIFY( FRLAND  )
-      NULLIFY( FROCEAN )
+      ALiq = 3.e+0_fp * VLiq / rLiq ! keep Radius in [cm]
+      AIce = 3.e+0_fp * VIce / rIce ! keep Radius in [cm]
 
     END SUBROUTINE Cld_Params
 !EOC
@@ -4277,33 +4179,34 @@ MODULE GCKPP_HETRATES
 !
 ! !DESCRIPTION: Subroutine GET_HALIDE_MOLARITY returns the molarity of
 !  either Br- or Cl- in liquid cloud water, ice cloud water and fine
-!  aerosol, in mol/kg water (eqv. to mol/L).
+!  aerosol, in mol/L.
 !\\
 !\\
 ! !INTERFACE:
 !
-      SUBROUTINE GET_HALIDE_MOLARITY( XTot, TK, LClPtn, IClPtn, FinePtn, VLiq, VIce, VAir, X_LCl, X_ICl, X_Fine )
+      SUBROUTINE GET_HALIDE_MOLARITY( NDOther, NDFine, NDCoarse, LClPtn, IClPtn, &
+                                      VLiq, VIce, MLCl, MICl, MFine, MCoarse )
 !
 ! !USES:
 !
 !
 ! !INPUT PARAMETERS:
 !
-      REAL(fp),  INTENT(IN) :: XTot    ! Number density [#/cm3]
-      REAL(fp),  INTENT(IN) :: TK      ! Air temperature [K]
-      REAL(fp),  INTENT(IN) :: LClPtn  ! Fraction of total X in liquid cloud [-]
-      REAL(fp),  INTENT(IN) :: FClPtn  ! Fraction of total X in ice cloud [-]
-      REAL(fp),  INTENT(IN) :: FinePtn ! Fraction of total X in fine aerosol [-]
-      REAL(fp),  INTENT(IN) :: VLiq    ! Volume of the cloud (liquid) [cm3]
-      REAL(fp),  INTENT(IN) :: VIce    ! Volume of the cloud (ice) [cm3]
-      REAL(fp),  INTENT(IN) :: VAir    ! Volume of air [cm3]
+      REAL(fp),  INTENT(IN) :: NDOther  ! Total X in gas and cloud [#/cm3]
+      REAL(fp),  Intent(In) :: NDFine   ! Total X in fine aerosol [#/cm3]
+      REAL(fp),  Intent(In) :: NDCoarse ! Total X in coarse aerosol [#/cm3]
+      REAL(fp),  INTENT(IN) :: LClPtn   ! Fraction of XOther in liquid cloud [-]
+      REAL(fp),  INTENT(IN) :: IClPtn   ! Fraction of XOther in cloud ice [-]
+      REAL(fp),  INTENT(IN) :: VLiq     ! Volume of the cloud (liquid) [cm3/cm3]
+      REAL(fp),  INTENT(IN) :: VIce     ! Volume of the cloud (ice) [cm3/cm3]
 
 !
-! !RETURN VALUE:
+! !OUTPUT PARAMETERS:
 !
-      REAL(fp), INTENT(OUT) :: X_LCl  ! Liq. phase molar concentration [mol/kg-water]
-      REAL(fp), INTENT(OUT) :: X_ICl  ! Liq. phase molar concentration [mol/kg-water]
-      REAL(fp), INTENT(OUT) :: X_Fine ! Liq. phase molar concentration [mol/kg-water]
+      REAL(fp), INTENT(OUT) :: MLCl     ! Liq. phase molarity in cloud liquid      [mol/L]
+      REAL(fp), INTENT(OUT) :: MICl     ! Liq. phase molarity in ice surface layer [mol/L]
+      REAL(fp), INTENT(OUT) :: MFine    ! Liq. phase molarity in fine aerosol      [mol/L]
+      REAL(fp), INTENT(OUT) :: MCoarse  ! Liq. phase molarity in coarse aerosol    [mol/L]
 !
 ! !REMARKS:
 !
@@ -4317,40 +4220,51 @@ MODULE GCKPP_HETRATES
 !
 ! !LOCAL VARIABLES:
 !
-      REAL(fp)            :: n_br, n_cl ! dissolved bromide and chloride [#/cm3(air)]
-      REAL(fp)            :: V_tot, dr_ratio, t2l ! 
-      Real(fp)            :: VLCld, VICld, VSulf, VSSA, VFine
-      REAL(fp)            :: L2G, F_L
+      ! Assume 98% of the ice crystal radius is solid
+      REAL(fp), Parameter :: OMDR_Ratio = 0.98e+0_fp
+      REAL(fp), Parameter :: VFracIce = (1.0e+0_fp-(OMDR_Ratio**3.0e+0_fp))
+
+      ! Temporary variables
+      Real(fp)            :: VLCl, VICl, VSulf, VSSA, VSSC, VFine, VCoarse
+      REAL(fp)            :: NDICl, NDLCl
    
       !=================================================================
       ! GET_HALIDE_MOLARITY begins here!
       !=================================================================
 
-      ! Estimate water in ice crystal surface layer
-      DR_RATIO = 2e-2_fp
-      T2L = 1.0e0_fp / ( 1.0e0_fp - (1.0e0_fp - DR_RATIO)**3.0e0_fp )
 
       ! Get total liquid in each aerosol type
-      VLCld = (VLiq/VAir)
-      VICld = ((VIce/VAir) / T2L)
+      VLCl  = VLiq
+      VICl  = VIce * VFracIce
       VSulf = xArea(8)  * xRadi(8)  / 3.0e0_fp  ! (cm3(liq)/cm3(air)
       VSSA  = xArea(11) * xRadi(11) / 3.0e0_fp  ! (cm3(liq)/cm3(air)
+      VSSC  = xArea(12) * xRadi(12) / 3.0e0_fp  ! (cm3(liq)/cm3(air)
+
+      ! Divide available volume into aerosol size bins
       VFine = VSulf + VSSA
-      VTot = VFine + VICld + VLCld
+      VCoarse = VSSC
+
+      ! Get the number density dissolved in clouds (molec/cm3 air)
+      NDICl = NDOther * IClPtn
+      NDLCl = NDOther * LClPtn
 
       ! Trap for low totals
-      X_ICl  = 1.0e-20_fp
-      X_LCl  = 1.0e-20_fp
-      X_Fine = 1.0e-20_fp
+      MICl    = 1.0e-20_fp
+      MLCl    = 1.0e-20_fp
+      MFine   = 1.0e-20_fp
+      MCoarse = 1.0e-20_fp
 
-      ! Use the archived partitioning
-      If (V_LCl .gt.1.0e-20) X_LCl  = LClPtn  * X_Tot / (VLCl  * AVO * 1.0e-3_fp) ! [X-] in (mol/L)
-      If (V_ICl .gt.1.0e-20) X_ICl  = IClPtn  * X_Tot / (VICl  * AVO * 1.0e-3_fp) ! [X-] in (mol/L)
-      If (V_Fine.gt.1.0e-20) X_Fine = FinePtn * X_Tot / (VFine * AVO * 1.0e-3_fp) ! [X-] in (mol/L)
+      ! Use the archived partitioning to get molarity (mol/L)
+      If (VLCl    .gt. 1.0e-20) MLCl    = NDLCl    / (VLCl    * AVO * 1.0e-3_fp)
+      If (VICl    .gt. 1.0e-20) MICl    = NDICl    / (VICl    * AVO * 1.0e-3_fp)
+      If (VFine   .gt. 1.0e-20) MFine   = NDFine   / (VFine   * AVO * 1.0e-3_fp)
+      If (VCoarse .gt. 1.0e-20) MCoarse = NDCoarse / (VCoarse * AVO * 1.0e-3_fp)
 
-      X_LCl  = Max(Min(X_LCl,  5.0e0_fp), 1.0e-20_fp)
-      X_ICl  = Max(Min(X_ICl,  5.0e0_fp), 1.0e-20_fp)
-      X_Fine = Max(Min(X_Fine, 5.0e0_fp), 1.0e-20_fp)
+      ! Apply limits
+      MLCl    = Max(Min(MLCl,    5.0e0_fp), 1.0e-20_fp)
+      MICl    = Max(Min(MICl,    5.0e0_fp), 1.0e-20_fp)
+      MFine   = Max(Min(MFine,   5.0e0_fp), 1.0e-20_fp)
+      MCoarse = Max(Min(MCoarse, 5.0e0_fp), 1.0e-20_fp)
 
       END SUBROUTINE GET_HALIDE_MOLARITY
 !EOC
